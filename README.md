@@ -47,9 +47,20 @@ python -m leafscan.cli run --scans scans/leaf --out out --scale 0.25   # fast de
 ```
 
 ### Outputs
-`out/normal_gl.png`, `out/normal_dx.png`, `out/albedo.png`, `out/albedo_srgb.png`,
-`out/height.png`, and `out/qa/` (re-render residuals — the main QA signal —
-mask agreement, light-vector dump in `report.txt`).
+`out/normal_gl.png`, `out/normal_dx.png` (16-bit), `out/albedo.png` (linear) +
+`out/albedo_srgb.png`, `out/height.png`, `out/alpha.png` (leaf silhouette), and
+the RGBA convenience maps `out/albedo_srgb_rgba.png`, `out/normal_gl_rgba.png`
+(ready for a transparent plane). Plus `out/qa/` (re-render residuals — the main
+QA signal — mask agreement, light-vector dump in `report.txt`).
+
+### Edge / alpha (config `output.edge` + `output.alpha`)
+The leaf boundary is a ring of mixed leaf/white-background pixels, and the warp's
+bilinear remap smears white inward there. `edge.trim_px` erodes that ring and the
+leaf edge is re-filled from clean interior (kills the white halo + stretch).
+`edge.pad_px` adds texture padding *outside* the silhouette for mip-bleed on
+meshes — **0 by default** (transparent cutouts don't want it; toggle it up in a
+UI later). `alpha.enabled` writes the opacity map; `alpha.feather_px` softens its
+edge (0 = crisp).
 
 ## Read the QA first (spec §8.4)
 - Low, noise-like `qa/residual_scan*.png` → trust the solve.

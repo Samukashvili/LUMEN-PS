@@ -187,22 +187,61 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
         normal = normal / np.clip(nrm, 1e-8, None)
 
-    normal = _fill_invalid(normal, valid, ref_mask)
-    albedo_rgb = _fill_invalid(albedo_rgb, valid, ref_mask)
+    # Edge trim + clean padding (fixes background-bleed halo and warp-stretch at
+    # the boundary — same idea as UV padding). The leaf/background boundary is a
+    # ring of mixed leaf+white pixels, and the warp's bilinear remap smears white
+    # inward there. So: keep only the clean interior (erode), then re-pad outward
+    # from that interior (nearest-valid) instead of leaving the stretched rim.
+    import cv2
+    ecfg = ocfg.get("edge", {})
+    trim_px = int(ecfg.get("trim_px", 6))
+    pad_px = int(ecfg.get("pad_px", 0))
+    solved = ref_mask & valid
+    core = solved                                 # clean, background-free silhouette
+    if trim_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trim_px * 2 + 1,) * 2)
+        core = cv2.erode(solved.astype(np.uint8), k).astype(bool)
+
+    # Cut the alpha at `core` and DO NOT extend data past it: nearest-valid fill
+    # produces radial streaks at the silhouette (the "stretch" artifact), so we
+    # only fill genuine interior holes (hidden inside the leaf). pad_px optionally
+    # adds mip-bleed padding OUTSIDE the leaf — beyond the alpha, never seen on a
+    # cutout.
+    fill_region = core
+    if pad_px > 0:
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pad_px * 2 + 1,) * 2)
+        fill_region = cv2.dilate(core.astype(np.uint8), k).astype(bool)
+
+    normal = _fill_invalid(normal, solved, fill_region)      # interior holes (+ pad)
+    albedo_rgb = _fill_invalid(albedo_rgb, solved, fill_region)
     nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
     normal = np.where(nrm > 1e-8, normal / np.clip(nrm, 1e-8, None), normal)
-    out_valid = ref_mask  # solved+filled over the whole leaf
+    out_valid = fill_region       # clean core (+ optional padding)
+    qa_valid = solved             # evaluate residual only where we truly solved
+
+    # Alpha = the clean core silhouette, so the visible cutout is exactly the
+    # background-free data — no white ring, no fill stretch.
+    acfg = ocfg.get("alpha", {})
+    alpha = None
+    if acfg.get("enabled", True):
+        alpha = core.astype(np.float32)
+        feather = float(acfg.get("feather_px", 0.0))
+        if feather > 0:
+            alpha = cv2.GaussianBlur(alpha, (0, 0), feather)
+    log(f"[edge] trim={trim_px}px pad={pad_px}px  core={int(core.sum())}px "
+        f"solved={int(solved.sum())}px  alpha={'on' if alpha is not None else 'off'}")
 
     # ---- 10. height integration (§9.1) ----
     height = None
     if cfg["integrate"]["enabled"]:
+        # integrate over the clean core so padded pixels don't inject fake slopes
         height = integrate.integrate_height(
-            normal, out_valid, cfg["integrate"]["highpass_sigma"])
+            normal, core, cfg["integrate"]["highpass_sigma"])
         log("[integrate] Frankot-Chellappa height computed")
 
     # ---- 11. outputs + QA ----
     written = outputs.write_outputs(
-        out_dir, normal, albedo_rgb, out_valid, height,
+        out_dir, normal, albedo_rgb, out_valid, height, alpha=alpha,
         normal_bits=ocfg["normal_bits"],
         albedo_linear=ocfg["albedo_linear"], albedo_srgb=ocfg["albedo_srgb"])
     for p in written:
@@ -210,7 +249,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
 
     sub = io.subsurface_hint(rgb_stack[0])
     stats = qa.write_qa(qa_dir, I_stack=I_stack, normal=normal, albedo=albedo_scalar,
-                        L=L, valid=out_valid, nsamples=nsamples, thetas=thetas,
+                        L=L, valid=qa_valid, nsamples=nsamples, thetas=thetas,
                         az0=az0, el=el, subsurface=sub, weights=out["weights"],
                         extra_text=f"light_source={source}  flat={flat_src}")
     log(f"[qa] residual means: {[round(s['mean'],4) for s in stats]}  -> {qa_dir}")

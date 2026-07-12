@@ -69,6 +69,15 @@ integrate:
 
 output:
   normal_bits: 16                 # 16-bit PNG normals to avoid banding on low slopes
+  edge:                           # boundary cleanup (kills the white halo + warp stretch)
+    trim_px: 6                    # erode the solved region to drop the mixed leaf/bg ring;
+                                  # the leaf boundary is then filled from clean interior
+    pad_px: 0                     # texture padding OUTSIDE the leaf silhouette. 0 = none
+                                  # (for cutouts on a transparent plane). Raise for meshes
+                                  # that need mip-bleed padding (future UI toggle).
+  alpha:
+    enabled: true                 # export alpha.png (leaf opacity) + RGBA convenience maps
+    feather_px: 0.0               # soften the alpha edge (0 = crisp silhouette)
   albedo_linear: true             # export linear albedo
   albedo_srgb: true               # and an sRGB-encoded copy
   smooth:
