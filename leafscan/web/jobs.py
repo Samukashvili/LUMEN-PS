@@ -157,7 +157,7 @@ def _run_capture(job: dict, sid: str, role: str):
         info["roi_mm"] = roi_mm
         _log(job, f"[scan] {role}: {info['shape']} depth={info['depth']} "
                   f"distinct={info['distinct_levels']}")
-        S.record_scan(sid, role, roi_mm=roi_mm)
+        S.record_scan(sid, role, roi_mm=roi_mm, dpi=cap["dpi"])
         job["result"] = {"role": role, "info": info}
         job["status"] = "done"
         _log(job, f"[scan] {role}: saved.")
@@ -191,6 +191,14 @@ def _run_pipeline_job(job: dict, sid: str):
         c90 = S.scans_dir(sid) / "calib90.png"
         calib = [str(c0), str(c90)] if (c0.exists() and c90.exists()) else None
         auto_crop = bool(cfg.get("runtime", {}).get("auto_crop", True))
+        # Smart-ROI captures record their glass rectangle per scan; hand the
+        # geometry to the pipeline so it can rebuild a common bed canvas.
+        meta = S.load_meta(sid) or {}
+        rois = meta.get("capture_rois") or {}
+        capture_rois = [rois.get(r) for r in S.LEAF_ROLES]
+        dpis = meta.get("capture_dpis") or {}
+        capture_dpi = next((dpis.get(r) for r in S.LEAF_ROLES if dpis.get(r)),
+                           cfg["capture"]["dpi"])
 
         res = run_pipeline(
             cfg, scans, S.out_dir(sid),
@@ -198,6 +206,7 @@ def _run_pipeline_job(job: dict, sid: str):
             calib_paths=calib, scale=cfg["runtime"]["scale"],
             verbose=True, log_fn=lambda s: _log(job, s), auto_crop=auto_crop,
             cancel_check=lambda: _check_cancelled(job),
+            capture_rois=capture_rois, capture_dpi=capture_dpi,
         )
         summary = {
             "az0": res["az0"], "el": res["el"], "thetas": res["thetas"],

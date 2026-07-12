@@ -120,11 +120,14 @@ def list_sessions() -> list[dict]:
     return out
 
 
-def record_scan(sid: str, role: str, roi_mm=None) -> dict:
+def record_scan(sid: str, role: str, roi_mm=None, dpi=None) -> dict:
     meta = load_meta(sid)
     meta["scans"][role] = True
     if role in LEAF_ROLES:
         meta.setdefault("capture_rois", {})[role] = list(roi_mm) if roi_mm else None
+        # keep the dpi the ROI was captured at: mm->px placement at run time
+        # must not depend on config edits made after the capture
+        meta.setdefault("capture_dpis", {})[role] = dpi
     # Any replacement source makes prior outputs stale. Keep the files on disk
     # until the next run, but do not present them as results for the new capture.
     meta["result"] = None
@@ -150,6 +153,7 @@ def reset_scans(sid: str) -> dict:
             pass
     meta["scans"] = {role: False for role in ALL_ROLES}
     meta["capture_rois"] = {role: None for role in LEAF_ROLES}
+    meta["capture_dpis"] = {role: None for role in LEAF_ROLES}
     meta["status"] = "capturing"
     meta["result"] = None
     return save_meta(meta)

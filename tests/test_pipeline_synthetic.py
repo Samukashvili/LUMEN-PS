@@ -8,7 +8,8 @@ load/linearize/flat/mask/rigid/nonrigid/solve/integrate/outputs/qa together.
 import numpy as np
 from PIL import Image
 
-from leafscan.cli import _pad_stack_to_common_canvas, load_config, run_pipeline
+from leafscan.cli import (_assemble_bed_canvas, _centered_frame,
+                          _pad_stack_to_common_canvas, load_config, run_pipeline)
 from leafscan.io import linear_to_srgb
 from leafscan.lights import light_direction
 
@@ -70,6 +71,77 @@ def test_pipeline_end_to_end(tmp_path):
     # thetas recovered near k*90
     for k, th in enumerate(res["thetas"]):
         assert abs(((th - 90 * k + 180) % 360) - 180) < 5, res["thetas"]
+
+
+def test_pipeline_roi_captures_end_to_end(tmp_path):
+    """Smart-ROI simulation: each rotated scan cropped to a different bed rect.
+
+    With capture_rois + capture_dpi the pipeline must rebuild bed geometry,
+    align cleanly, and deliver a centred leaf.
+    """
+    S = 200
+    az0, el = 90.0, 35.0
+    z, rho, mask = _leaf_scene(S)
+    L_scanner = light_direction(az0, el)
+
+    # dpi=25.4 => exactly 1 px per mm, so px offsets double as mm offsets
+    dpi = 25.4
+    offsets = [(10, 20), (25, 5), (0, 15), (18, 0)]   # (x, y) px == mm
+    scan_dir = tmp_path / "scans"
+    scan_dir.mkdir()
+    rois = []
+    for k, (ox, oy) in enumerate(offsets):
+        lin = _render_rotated(z, rho, mask, k, L_scanner)
+        w, h = S - 22 - ox // 2, S - 24 - oy // 2      # per-scan sizes differ
+        sub = lin[oy:oy + h, ox:ox + w]
+        srgb8 = (linear_to_srgb(sub) * 255).astype(np.uint8)
+        Image.fromarray(srgb8, "RGB").save(scan_dir / f"k{k}.png")
+        rois.append((float(ox), float(oy), float(sub.shape[1]), float(sub.shape[0])))
+
+    cfg = load_config()
+    cfg["light"]["source"] = "config"
+    cfg["light"]["az0_deg"] = az0
+    cfg["light"]["el_deg"] = el
+
+    res = run_pipeline(cfg, sorted(scan_dir.glob("k*.png")), tmp_path / "out",
+                       verbose=False, auto_crop=True,
+                       capture_rois=rois, capture_dpi=dpi)
+
+    means = [s["mean"] for s in res["residual"]]
+    assert max(means) < 0.05, f"residual too high: {means}"
+    assert res["valid_px"] > 0.5 * mask.sum()
+    for k, th in enumerate(res["thetas"]):
+        assert abs(((th - 90 * k + 180) % 360) - 180) < 5, res["thetas"]
+
+    # the delivered leaf must be centred in the output frame
+    alpha = np.asarray(Image.open(res["out_dir"] / "alpha.png"), dtype=np.float32)
+    ys, xs = np.nonzero(alpha > 127)
+    H, W = alpha.shape[:2]
+    cx, cy = xs.mean(), ys.mean()
+    tol = 0.05 * max(H, W) + 2
+    assert abs(cx - W / 2) < tol and abs(cy - H / 2) < tol, (cx, cy, W, H)
+
+
+def test_assemble_bed_canvas_places_scans_at_offsets():
+    a = np.ones((4, 5), np.float32)          # roi at (2mm, 1mm)
+    b = np.full((6, 3), 2, np.float32)       # roi at (0mm, 0mm)
+    dpi = 25.4                                # 1 px per mm
+    stack, rect = _assemble_bed_canvas([a, b], [(2, 1, 5, 4), (0, 0, 3, 6)],
+                                       dpi, scale=1.0)
+    assert rect == (0, 0, 7, 6)
+    assert all(s.shape == (6, 7) for s in stack)
+    assert np.all(stack[0][1:5, 2:7] == 1)   # a's payload at its bed offset
+    assert np.all(stack[1][0:6, 0:3] == 2)   # b's payload at the origin
+
+
+def test_centered_frame_centers_mask():
+    mask = np.zeros((100, 120), bool)
+    mask[10:30, 80:110] = True               # off-centre blob
+    frame = _centered_frame(mask)
+    assert frame is not None
+    sy, sx = frame
+    assert abs((sy.start + sy.stop) / 2 - (10 + 30) / 2) <= 1
+    assert abs((sx.start + sx.stop) / 2 - (80 + 110) / 2) <= 1
 
 
 def test_variable_roi_stack_is_edge_padded():

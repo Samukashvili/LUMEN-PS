@@ -91,12 +91,16 @@ def _fill_invalid(arr, valid, region):
 # --------------------------------------------------------------------------- #
 def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
                  scale=None, verbose=True, log_fn=None, auto_crop=False,
-                 cancel_check=None):
+                 cancel_check=None, capture_rois=None, capture_dpi=None):
     """Run the full pipeline.
 
     ``log_fn`` — optional callback(str) for streaming progress (the web UI passes
     one; defaults to print). ``auto_crop`` — crop the 4 scans to a common leaf
     ROI before the full-res solve so large scans fit in memory.
+    ``capture_rois`` — optional per-scan (x, y, w, h) bed rectangles in mm (None
+    entries = full bed) from the smart-ROI capture; with ``capture_dpi`` they let
+    the pipeline place each ROI capture at its true bed offset so alignment and
+    flat-fielding see consistent geometry.
     """
     out_dir = Path(out_dir)
     qa_dir = out_dir / "qa"
@@ -124,8 +128,12 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     cv2.setNumThreads(max(1, int(cfg.get("runtime", {}).get("cpu_threads", 4))))
 
     # ---- 0. optional auto-ROI crop (keeps full-res stacks within memory) ----
-    crop_box = None
-    if auto_crop:
+    crop_box = None          # full-bed-space box (equal-size full captures only)
+    canvas_box = None        # canvas-space box (variable/ROI captures)
+    rois = list(capture_rois) if capture_rois else None
+    have_geometry = bool(rois) and len(rois) == len(scan_paths) \
+        and any(r is not None for r in rois) and bool(capture_dpi)
+    if auto_crop and not have_geometry:
         from PIL import Image
         source_shapes = []
         for path in scan_paths:
@@ -136,7 +144,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
             crop_box = align.union_leaf_bbox(scan_paths, cfg)
             log(f"[crop] auto-ROI x[{crop_box[0]},{crop_box[1]}] y[{crop_box[2]},{crop_box[3]}]")
         else:
-            log("[crop] variable-size ROI captures detected; deferring common crop until load")
+            log("[crop] variable-size captures without ROI geometry; deferring common crop until load")
 
     # ---- 1. load + linearize ----
     log(f"[load] {len(scan_paths)} scans, scale={scale}, srgb={is_srgb}")
@@ -148,8 +156,13 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
             r = _apply_box(r, crop_box, scale)
         rgb.append(r); metas.append((sp, meta))
     native_shapes = [r.shape for r in rgb]
-    variable_roi = len({shape[:2] for shape in native_shapes}) > 1
-    if len({r.shape[:2] for r in rgb}) > 1:
+    bed_rect = None
+    if have_geometry:
+        # Rebuild one bed-coordinate canvas from the per-scan ROI captures so
+        # alignment and flat-fielding see the same geometry as full-bed scans.
+        rgb, bed_rect = _assemble_bed_canvas(rgb, rois, capture_dpi, scale)
+        log(f"[crop] placed ROI captures at bed offsets; canvas {rgb[0].shape[:2]}")
+    elif len({r.shape[:2] for r in rgb}) > 1:
         rgb = _pad_stack_to_common_canvas(rgb)
         log(f"[crop] normalized variable ROI scans to common canvas {rgb[0].shape[:2]}")
     luma = []
@@ -159,32 +172,50 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         log(f"  scan{i}: {sp.name} {native_shapes[i]} -> {rgb[i].shape} "
             f"native={meta['native_dtype']} distinct={meta['distinct_levels']} "
             f"genuine_high_bit={meta['genuine_high_bit']}")
+    variable_roi = have_geometry or len({s[:2] for s in native_shapes}) > 1
     if auto_crop and variable_roi:
-        crop_box = _common_content_bbox(luma, cfg)
-        log(f"[crop] common ROI x[{crop_box[0]},{crop_box[1]}] "
-            f"y[{crop_box[2]},{crop_box[3]}]")
-        rgb = [_apply_box(r, crop_box, 1.0) for r in rgb]
-        luma = [_apply_box(l, crop_box, 1.0) for l in luma]
+        canvas_box = _common_content_bbox(luma, cfg)
+        log(f"[crop] common ROI x[{canvas_box[0]},{canvas_box[1]}] "
+            f"y[{canvas_box[2]},{canvas_box[3]}]")
+        rgb = [_apply_box(r, canvas_box, 1.0) for r in rgb]
+        luma = [_apply_box(l, canvas_box, 1.0) for l in luma]
     H, W = luma[0].shape
 
     # ---- 2. flat-field + dark (mandatory, §5.3) ----
     ref_mask0 = align.segment_leaf(luma[0], **_mask_kw(cfg))
+    flat = None
     if flat_path:
         flat_rgb, _ = io.load_image_linear(flat_path, is_srgb, scale)
-        if crop_box is not None:
+        if bed_rect is not None:
+            flat_rgb = _crop_bed_rect(flat_rgb, bed_rect)   # full-bed -> canvas
+        elif crop_box is not None:
             flat_rgb = _apply_box(flat_rgb, crop_box, scale)
-        flat = io.to_luminance(flat_rgb, lw)
-        flat_src = f"scan:{Path(flat_path).name}"
+        if canvas_box is not None:
+            flat_rgb = _apply_box(flat_rgb, canvas_box, 1.0)
+        if flat_rgb.shape[:2] == luma[0].shape:
+            flat = io.to_luminance(flat_rgb, lw)
+            flat_src = f"scan:{Path(flat_path).name}"
+        else:
+            log(f"[flat] blank scan {flat_rgb.shape[:2]} does not match the capture "
+                f"frame {luma[0].shape}; falling back to background fit")
+    if flat is not None:
+        flats = [flat] * len(luma)
     else:
-        flat = align.estimate_flat_field_from_background(luma[0], ref_mask0)
-        flat_src = "background-fit (no blank scan)"
+        # Fit the lamp falloff from each scan's OWN background: with ROI
+        # captures the scans cover different bed regions, so scan 0's falloff
+        # is not valid for the others.
+        flat_src = "background-fit (no usable blank scan)"
+        pre_masks = [ref_mask0] + [align.segment_leaf(l, **_mask_kw(cfg))
+                                   for l in luma[1:]]
+        flats = [align.estimate_flat_field_from_background(l, m)
+                 for l, m in zip(luma, pre_masks)]
     bl = cfg["io"]["black_level"]
-    dark = io.estimate_black_level(flat, cfg["io"]["black_percentile"]) if bl is None else bl
+    dark = io.estimate_black_level(flats[0], cfg["io"]["black_percentile"]) if bl is None else bl
     log(f"[flat] source={flat_src}  dark={dark:.4f}")
 
     blur = cfg["io"]["flat_field_blur_sigma"]
-    luma = [io.flat_field_correct(l, flat, dark, blur) for l in luma]
-    rgb = [io.flat_field_correct(r, flat, dark, blur) for r in rgb]
+    luma = [io.flat_field_correct(l, f, dark, blur) for l, f in zip(luma, flats)]
+    rgb = [io.flat_field_correct(r, f, dark, blur) for r, f in zip(rgb, flats)]
 
     # ---- 3. masks ----
     masks = [align.segment_leaf(l, **_mask_kw(cfg)) for l in luma]
@@ -345,6 +376,32 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     log(f"[edge] trim={trim_px}px pad={pad_px}px  core={int(core.sum())}px "
         f"solved={int(solved.sum())}px  alpha={'on' if alpha is not None else 'off'}")
 
+    # ---- 9.5 final framing: centre the leaf in the delivered maps ----
+    # The pre-solve crop is a memory optimisation computed from the UNALIGNED
+    # union of leaf positions, so the reference leaf can sit off-centre in it
+    # (especially with per-scan ROI captures). Re-crop symmetrically around the
+    # final silhouette so outputs and QA share consistent, centred framing.
+    if auto_crop:
+        frame = _centered_frame(core if core.any() else solved)
+        if frame is not None:
+            sy, sx = frame
+            normal = normal[sy, sx]
+            albedo_rgb = albedo_rgb[sy, sx]
+            albedo_scalar = albedo_scalar[sy, sx]
+            core = core[sy, sx]
+            out_valid = out_valid[sy, sx]
+            qa_valid = qa_valid[sy, sx]
+            nsamples = nsamples[sy, sx]
+            I_stack = I_stack[:, sy, sx]
+            rgb_stack = rgb_stack[:, sy, sx]
+            out["weights"] = out["weights"][:, sy, sx]
+            if alpha is not None:
+                alpha = alpha[sy, sx]
+            if repair_map is not None:
+                repair_map = repair_map[sy, sx]
+            log(f"[frame] centered crop -> {normal.shape[1]}x{normal.shape[0]} "
+                f"(x[{sx.start},{sx.stop}] y[{sy.start},{sy.stop}])")
+
     # ---- 10. height integration (§9.1) ----
     height = None
     if cfg["integrate"]["enabled"]:
@@ -397,6 +454,72 @@ def _pad_stack_to_common_canvas(stack):
             pad += ((0, 0),)
         out.append(np.pad(arr, pad, mode="edge"))
     return out
+
+
+def _assemble_bed_canvas(stack, rois_mm, dpi, scale):
+    """Place ROI captures at their true bed offsets on one shared canvas.
+
+    ``rois_mm[i]`` is the (x, y, w, h) glass rectangle scan i was captured from
+    (None = full bed, offset 0). Returns ``(new_stack, bed_rect)`` where
+    ``bed_rect = (x0, y0, x1, y1)`` is the canvas extent in *scaled* full-bed
+    pixels — usable to crop a full-bed flat scan onto the same canvas.
+    """
+    px_per_mm = float(dpi) / 25.4 * float(scale)
+    offs = []
+    for roi in rois_mm:
+        x = float(roi[0]) if roi else 0.0
+        y = float(roi[1]) if roi else 0.0
+        offs.append((int(round(x * px_per_mm)), int(round(y * px_per_mm))))
+    x0 = min(o[0] for o in offs)
+    y0 = min(o[1] for o in offs)
+    x1 = max(o[0] + a.shape[1] for o, a in zip(offs, stack))
+    y1 = max(o[1] + a.shape[0] for o, a in zip(offs, stack))
+    out = []
+    for arr, (ox, oy) in zip(stack, offs):
+        top, left = oy - y0, ox - x0
+        pad = ((top, (y1 - y0) - arr.shape[0] - top),
+               (left, (x1 - x0) - arr.shape[1] - left))
+        if arr.ndim == 3:
+            pad += ((0, 0),)
+        out.append(np.pad(arr, pad, mode="edge"))
+    return out, (x0, y0, x1, y1)
+
+
+def _crop_bed_rect(arr, rect):
+    """Crop a full-bed image to a (x0, y0, x1, y1) pixel rect, edge-padding any
+    overhang so the result always matches the rect size."""
+    x0, y0, x1, y1 = rect
+    h, w = arr.shape[:2]
+    sub = arr[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
+    ph, pw = (y1 - y0) - sub.shape[0], (x1 - x0) - sub.shape[1]
+    if ph or pw:
+        top, left = max(0, -y0), max(0, -x0)
+        pad = ((top, ph - top), (left, pw - left))
+        if arr.ndim == 3:
+            pad += ((0, 0),)
+        sub = np.pad(sub, pad, mode="edge")
+    return sub
+
+
+def _centered_frame(mask, margin_frac=0.04):
+    """Symmetric crop window (y-slice, x-slice) centring ``mask`` in the frame.
+
+    Returns None when there is nothing to centre or nothing to crop.
+    """
+    ys, xs = np.nonzero(mask)
+    if xs.size == 0:
+        return None
+    H, W = mask.shape
+    bw, bh = int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
+    m = int(round(margin_frac * max(bw, bh)))
+    cx = int(round((xs.min() + xs.max()) / 2.0))
+    cy = int(round((ys.min() + ys.max()) / 2.0))
+    hw, hh = bw // 2 + m + 1, bh // 2 + m + 1
+    x0, x1 = max(0, cx - hw), min(W, cx + hw)
+    y0, y1 = max(0, cy - hh), min(H, cy + hh)
+    if x0 == 0 and y0 == 0 and x1 == W and y1 == H:
+        return None
+    return slice(y0, y1), slice(x0, x1)
 
 
 def _common_content_bbox(luma, cfg, margin_frac=0.04):
