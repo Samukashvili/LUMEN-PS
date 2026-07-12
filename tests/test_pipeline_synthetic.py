@@ -8,7 +8,7 @@ load/linearize/flat/mask/rigid/nonrigid/solve/integrate/outputs/qa together.
 import numpy as np
 from PIL import Image
 
-from leafscan.cli import load_config, run_pipeline
+from leafscan.cli import _pad_stack_to_common_canvas, load_config, run_pipeline
 from leafscan.io import linear_to_srgb
 from leafscan.lights import light_direction
 
@@ -70,6 +70,14 @@ def test_pipeline_end_to_end(tmp_path):
     # thetas recovered near k*90
     for k, th in enumerate(res["thetas"]):
         assert abs(((th - 90 * k + 180) % 360) - 180) < 5, res["thetas"]
+
+
+def test_variable_roi_stack_is_edge_padded():
+    stack = [np.ones((4, 6), dtype=np.float32), np.full((7, 6), 2, dtype=np.float32)]
+    padded = _pad_stack_to_common_canvas(stack)
+    assert [a.shape for a in padded] == [(7, 6), (7, 6)]
+    assert np.all(padded[0][1:5] == 1)
+    assert np.all(padded[0][0] == 1) and np.all(padded[0][-1] == 1)
 
 
 if __name__ == "__main__":

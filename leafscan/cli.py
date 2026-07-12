@@ -119,20 +119,42 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     # ---- 0. optional auto-ROI crop (keeps full-res stacks within memory) ----
     crop_box = None
     if auto_crop:
-        crop_box = align.union_leaf_bbox(scan_paths, cfg)
-        log(f"[crop] auto-ROI x[{crop_box[0]},{crop_box[1]}] y[{crop_box[2]},{crop_box[3]}]")
+        from PIL import Image
+        source_shapes = []
+        for path in scan_paths:
+            with Image.open(path) as image:
+                source_shapes.append((image.height, image.width))
+        if len(set(source_shapes)) == 1:
+            crop_box = align.union_leaf_bbox(scan_paths, cfg)
+            log(f"[crop] auto-ROI x[{crop_box[0]},{crop_box[1]}] y[{crop_box[2]},{crop_box[3]}]")
+        else:
+            log("[crop] variable-size ROI captures detected; deferring common crop until load")
 
     # ---- 1. load + linearize ----
     log(f"[load] {len(scan_paths)} scans, scale={scale}, srgb={is_srgb}")
-    rgb, luma = [], []
+    rgb, metas = [], []
     for i, sp in enumerate(scan_paths):
         r, meta = io.load_image_linear(sp, is_srgb, scale)
         if crop_box is not None:
             r = _apply_box(r, crop_box, scale)
-        rgb.append(r)
-        luma.append(io.to_luminance(r, lw))
-        log(f"  scan{i}: {sp.name} {r.shape} native={meta['native_dtype']} "
-            f"distinct={meta['distinct_levels']} genuine_high_bit={meta['genuine_high_bit']}")
+        rgb.append(r); metas.append((sp, meta))
+    native_shapes = [r.shape for r in rgb]
+    variable_roi = len({shape[:2] for shape in native_shapes}) > 1
+    if len({r.shape[:2] for r in rgb}) > 1:
+        rgb = _pad_stack_to_common_canvas(rgb)
+        log(f"[crop] normalized variable ROI scans to common canvas {rgb[0].shape[:2]}")
+    luma = []
+    for i, (sp, meta) in enumerate(metas):
+        luma.append(io.to_luminance(rgb[i], lw))
+        log(f"  scan{i}: {sp.name} {native_shapes[i]} -> {rgb[i].shape} "
+            f"native={meta['native_dtype']} distinct={meta['distinct_levels']} "
+            f"genuine_high_bit={meta['genuine_high_bit']}")
+    if auto_crop and variable_roi:
+        crop_box = _common_content_bbox(luma, cfg)
+        log(f"[crop] common ROI x[{crop_box[0]},{crop_box[1]}] "
+            f"y[{crop_box[2]},{crop_box[3]}]")
+        rgb = [_apply_box(r, crop_box, 1.0) for r in rgb]
+        luma = [_apply_box(l, crop_box, 1.0) for l in luma]
     H, W = luma[0].shape
 
     # ---- 2. flat-field + dark (mandatory, §5.3) ----
@@ -291,6 +313,42 @@ def _mask_kw(cfg):
     m = cfg["align"]["mask"]
     return dict(close_radius=m["close_radius"], open_radius=m["open_radius"],
                 keep_largest=m["keep_largest"])
+
+
+def _pad_stack_to_common_canvas(stack):
+    """Edge-pad variable-size ROI captures so the solver has one image canvas."""
+    if not stack:
+        return stack
+    h = max(a.shape[0] for a in stack)
+    w = max(a.shape[1] for a in stack)
+    out = []
+    for arr in stack:
+        top = (h - arr.shape[0]) // 2
+        left = (w - arr.shape[1]) // 2
+        pad = ((top, h - arr.shape[0] - top), (left, w - arr.shape[1] - left))
+        if arr.ndim == 3:
+            pad += ((0, 0),)
+        out.append(np.pad(arr, pad, mode="edge"))
+    return out
+
+
+def _common_content_bbox(luma, cfg, margin_frac=0.04):
+    """Return a common current-resolution bbox around all segmented subjects."""
+    kw = _mask_kw(cfg)
+    x0 = y0 = 1e18
+    x1 = y1 = -1e18
+    full_h, full_w = luma[0].shape
+    for image in luma:
+        mask = align.segment_leaf(image, **kw)
+        ys, xs = np.nonzero(mask)
+        if xs.size:
+            x0, x1 = min(x0, xs.min()), max(x1, xs.max())
+            y0, y1 = min(y0, ys.min()), max(y1, ys.max())
+    if x1 < x0:
+        return (0, full_w, 0, full_h)
+    margin = int(round(margin_frac * max(full_h, full_w)))
+    return (max(0, int(x0) - margin), min(full_w, int(x1) + margin),
+            max(0, int(y0) - margin), min(full_h, int(y1) + margin))
 
 
 def _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log):

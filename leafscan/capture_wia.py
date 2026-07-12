@@ -128,10 +128,12 @@ def scan_to_file(
     ymax = _prop_max(item, WIA_IPS_YEXTENT)
     if roi_mm and roi_mm[2] and roi_mm[3]:
         x, y, w, h = roi_mm
-        _set(item, WIA_IPS_XPOS, min(mm_to_px(x), xmax - 1))
-        _set(item, WIA_IPS_YPOS, min(mm_to_px(y), ymax - 1))
-        _set(item, WIA_IPS_XEXTENT, min(mm_to_px(w), xmax))
-        _set(item, WIA_IPS_YEXTENT, min(mm_to_px(h), ymax))
+        x_px = min(mm_to_px(x), xmax - 1)
+        y_px = min(mm_to_px(y), ymax - 1)
+        _set(item, WIA_IPS_XPOS, x_px)
+        _set(item, WIA_IPS_YPOS, y_px)
+        _set(item, WIA_IPS_XEXTENT, max(1, min(mm_to_px(w), xmax - x_px)))
+        _set(item, WIA_IPS_YEXTENT, max(1, min(mm_to_px(h), ymax - y_px)))
     else:
         _set(item, WIA_IPS_XPOS, 0)
         _set(item, WIA_IPS_YPOS, 0)
@@ -185,6 +187,64 @@ def scan_to_file(
             print("[capture] NOTE: <=256 distinct levels => genuinely 8-bit data "
                   "(expected on this hardware). Linearize sRGB in io.py.")
     return info
+
+
+def detect_content_roi_mm(
+    image_path,
+    dpi: int,
+    padding_mm: float = 10.0,
+    min_component_fraction: float = 0.0005,
+):
+    """Find meaningful non-background content in a low-resolution bed scan.
+
+    Returns ``(x, y, width, height)`` in millimetres, ready for ``roi_mm``.
+    The border colour is treated as the scanner-bed background; significant
+    connected components are unioned so a leaf plus fiducials stay together.
+    ``None`` means detection was not trustworthy and callers should scan the
+    full bed instead.
+    """
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(image_path) as im:
+        rgb = np.asarray(im.convert("RGB"), dtype=np.uint8)
+    h, w = rgb.shape[:2]
+    if h < 8 or w < 8:
+        return None
+
+    edge = max(2, int(round(min(h, w) * 0.025)))
+    border = np.concatenate((
+        rgb[:edge].reshape(-1, 3), rgb[-edge:].reshape(-1, 3),
+        rgb[:, :edge].reshape(-1, 3), rgb[:, -edge:].reshape(-1, 3),
+    ))
+    background = np.median(border, axis=0)
+    difference = np.max(np.abs(rgb.astype(np.int16) - background.astype(np.int16)), axis=2)
+    difference = cv2.GaussianBlur(difference.astype(np.uint8), (5, 5), 0)
+    otsu, mask = cv2.threshold(difference, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if otsu < 6:
+        _, mask = cv2.threshold(difference, 6, 255, cv2.THRESH_BINARY)
+
+    radius = max(1, int(round(min(h, w) * 0.004)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    min_area = max(24, int(round(h * w * min_component_fraction)))
+    keep = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= min_area]
+    if not keep:
+        return None
+
+    x0 = min(int(stats[i, cv2.CC_STAT_LEFT]) for i in keep)
+    y0 = min(int(stats[i, cv2.CC_STAT_TOP]) for i in keep)
+    x1 = max(int(stats[i, cv2.CC_STAT_LEFT] + stats[i, cv2.CC_STAT_WIDTH]) for i in keep)
+    y1 = max(int(stats[i, cv2.CC_STAT_TOP] + stats[i, cv2.CC_STAT_HEIGHT]) for i in keep)
+    pad = int(round(float(padding_mm) / 25.4 * dpi))
+    x0, y0 = max(0, x0 - pad), max(0, y0 - pad)
+    x1, y1 = min(w, x1 + pad), min(h, y1 + pad)
+    if (x1 - x0) * (y1 - y0) >= h * w * 0.96:
+        return None
+    mm = 25.4 / float(dpi)
+    return (x0 * mm, y0 * mm, (x1 - x0) * mm, (y1 - y0) * mm)
 
 
 def _prop_max(item, prop_id):

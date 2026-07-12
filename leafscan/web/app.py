@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import io as _io
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -22,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
+APP_VERSION = "2026.07-smart-roi-v5"
 
 
 # ---- models ---------------------------------------------------------------- #
@@ -37,10 +39,19 @@ class ConfigReq(BaseModel):
     overrides: dict
 
 
+class OutputDirReq(BaseModel):
+    path: str | None = None
+
+
 # ---- pages / static -------------------------------------------------------- #
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/version")
+def api_version():
+    return {"version": APP_VERSION}
 
 
 # ---- device ---------------------------------------------------------------- #
@@ -88,6 +99,18 @@ def api_set_config(sid: str, body: ConfigReq):
     return {"config": S.session_config(sid)}
 
 
+@app.put("/api/sessions/{sid}/output-dir")
+def api_set_output_dir(sid: str, body: OutputDirReq):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    try:
+        meta = S.set_output_dir(sid, body.path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"output_dir": meta.get("output_dir"),
+            "effective_output_dir": str(S.out_dir(sid))}
+
+
 # ---- capture / run --------------------------------------------------------- #
 @app.post("/api/sessions/{sid}/capture")
 def api_capture(sid: str, body: CaptureReq):
@@ -99,6 +122,15 @@ def api_capture(sid: str, body: CaptureReq):
         raise HTTPException(409, "A job is already running for this session")
     job = jobs.start_capture(sid, body.role)
     return {"status": job["status"], "kind": job["kind"]}
+
+
+@app.post("/api/sessions/{sid}/reset-scans")
+def api_reset_scans(sid: str):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Wait for the active scanner or reconstruction job to finish")
+    return S.reset_scans(sid)
 
 
 @app.post("/api/sessions/{sid}/run")
@@ -123,13 +155,30 @@ def api_job(sid: str):
 
 
 # ---- images (scans + results, optional on-the-fly downscale) --------------- #
-def _serve_image(path: Path, maxdim: int | None, keep_alpha: bool):
-    if not path.exists():
-        raise HTTPException(404, f"{path.name} not found")
+@lru_cache(maxsize=96)
+def _render_preview(path_string: str, mtime_ns: int, maxdim: int | None,
+                    keep_alpha: bool) -> tuple[bytes, str]:
+    """Render and cache a small browser copy; mtime invalidates stale entries."""
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = None
+    path = Path(path_string)
     with Image.open(path) as im:
-        im = im.convert("RGBA" if keep_alpha else "RGB")
+        # PIL's direct I;16 -> RGB conversion clips values above 255, making
+        # 16-bit height maps look solid white. Scale the full uint16 range for
+        # browser previews while leaving the original downloadable file intact.
+        if im.mode in ("I;16", "I;16B", "I;16L", "I", "F"):
+            import numpy as np
+            arr = np.asarray(im)
+            if arr.dtype == np.uint16:
+                arr8 = (arr.astype(np.uint32) * 255 // 65535).astype(np.uint8)
+            else:
+                lo, hi = float(np.nanmin(arr)), float(np.nanmax(arr))
+                arr8 = np.zeros(arr.shape, dtype=np.uint8) if hi <= lo else np.clip(
+                    (arr.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255
+                ).astype(np.uint8)
+            im = Image.fromarray(arr8, mode="L").convert("RGB")
+        else:
+            im = im.convert("RGBA" if keep_alpha else "RGB")
         if maxdim:
             im.thumbnail((maxdim, maxdim), Image.LANCZOS)
         buf = _io.BytesIO()
@@ -139,8 +188,16 @@ def _serve_image(path: Path, maxdim: int | None, keep_alpha: bool):
         else:
             im.save(buf, format="JPEG", quality=88, progressive=True)
             media = "image/jpeg"
-    return Response(buf.getvalue(), media_type=media,
-                    headers={"Cache-Control": "no-store"})
+    return buf.getvalue(), media
+
+
+def _serve_image(path: Path, maxdim: int | None, keep_alpha: bool):
+    if not path.exists():
+        raise HTTPException(404, f"{path.name} not found")
+    data, media = _render_preview(str(path.resolve()), path.stat().st_mtime_ns,
+                                  maxdim, keep_alpha)
+    return Response(data, media_type=media,
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/sessions/{sid}/scan/{role}")
@@ -149,21 +206,43 @@ def api_scan_image(sid: str, role: str, max: int = 1000):
 
 
 @app.get("/api/sessions/{sid}/result/{name:path}")
-def api_result_image(sid: str, name: str, max: int = 0):
+def api_result_image(sid: str, name: str, max: int = 0,
+                     raw: bool = False, download: bool = False):
     # guard against path traversal
     base = S.out_dir(sid).resolve()
     path = (base / name).resolve()
     if base not in path.parents and path != base:
         raise HTTPException(400, "Invalid path")
+    if not path.exists():
+        raise HTTPException(404, f"{path.name} not found")
+    if raw or download or path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return FileResponse(path, filename=path.name if download else None)
     alpha = name.endswith("rgba.png") or name == "alpha.png" or name.startswith("normal_")
     return _serve_image(path, max or None, keep_alpha=alpha)
+
+
+@app.get("/api/sessions/{sid}/results")
+def api_result_manifest(sid: str):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    base = S.out_dir(sid)
+    files = []
+    if base.exists():
+        for path in sorted(p for p in base.rglob("*") if p.is_file()):
+            rel = path.relative_to(base).as_posix()
+            files.append({"name": rel, "bytes": path.stat().st_size,
+                          "kind": path.suffix.lower().lstrip(".")})
+    return {"output_dir": str(base), "files": files}
 
 
 # ---- live log stream ------------------------------------------------------- #
 @app.websocket("/api/sessions/{sid}/stream")
 async def ws_stream(ws: WebSocket, sid: str):
     await ws.accept()
-    idx = 0
+    try:
+        idx = max(0, int(ws.query_params.get("from", "0")))
+    except ValueError:
+        idx = 0
     try:
         while True:
             job = jobs.get_job(sid)

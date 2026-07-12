@@ -56,16 +56,43 @@ def _run_capture(job: dict, sid: str, role: str):
         cfg = S.session_config(sid)
         cap = cfg["capture"]
         out = S.scans_dir(sid) / f"{role}.png"
-        _log(job, f"[scan] {role}: warming lamp + scanning at {cap['dpi']} dpi ...")
+        roi_mm = None
+        smart = cap.get("smart_roi", {})
+        if role in S.LEAF_ROLES and smart.get("enabled", True):
+            preview_dpi = int(smart.get("preview_dpi", 75))
+            preview = S.scans_dir(sid) / "previews" / f"{role}.png"
+            _log(job, f"[scan] {role}: locator pass at {preview_dpi} dpi ...")
+            capture_wia.scan_to_file(
+                preview, dpi=preview_dpi, color=cap["color"],
+                brightness=cap["brightness"], contrast=cap["contrast"],
+                device_name_hint=cap.get("device_name_hint", "M113"),
+                verbose=False,
+            )
+            roi_mm = capture_wia.detect_content_roi_mm(
+                preview, preview_dpi,
+                padding_mm=float(smart.get("padding_mm", 10.0)),
+                min_component_fraction=float(smart.get("min_component_fraction", 0.0005)),
+            )
+            if roi_mm:
+                x, y, w, h = roi_mm
+                _log(job, f"[scan] {role}: content ROI x={x:.1f} y={y:.1f} "
+                          f"w={w:.1f} h={h:.1f} mm")
+            else:
+                _log(job, f"[scan] {role}: locator was inconclusive; using full bed")
+
+        scope = "detected area" if roi_mm else "full bed"
+        _log(job, f"[scan] {role}: detail pass at {cap['dpi']} dpi ({scope}) ...")
         info = capture_wia.scan_to_file(
             out, dpi=cap["dpi"], color=cap["color"],
             brightness=cap["brightness"], contrast=cap["contrast"],
+            roi_mm=roi_mm,
             device_name_hint=cap.get("device_name_hint", "M113"),
             verbose=False,
         )
+        info["roi_mm"] = roi_mm
         _log(job, f"[scan] {role}: {info['shape']} depth={info['depth']} "
                   f"distinct={info['distinct_levels']}")
-        S.record_scan(sid, role)
+        S.record_scan(sid, role, roi_mm=roi_mm)
         job["result"] = {"role": role, "info": info}
         job["status"] = "done"
         _log(job, f"[scan] {role}: saved.")

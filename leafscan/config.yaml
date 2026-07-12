@@ -12,6 +12,11 @@ capture:
   brightness: 6                   # WIA neutral (range 1..11). Lock identical for all scans.
   contrast: 6                     # WIA neutral. Lock identical for all scans.
   lamp_warmup_ms: 5000
+  smart_roi:
+    enabled: true                  # low-DPI locator pass, then high-DPI object-only scan
+    preview_dpi: 75                # lowest mode exposed by the connected HP scanner
+    padding_mm: 10.0               # physical safety margin around detected content
+    min_component_fraction: 0.0005 # ignore dust/specks in the locator scan
 
 io:
   input_is_srgb: true             # HP WIA driver emits 8-bit sRGB (verified on M1130). Undo it.

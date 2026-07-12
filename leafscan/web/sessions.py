@@ -8,6 +8,7 @@ sessions/<id>/
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from copy import deepcopy
@@ -60,7 +61,9 @@ def scans_dir(sid: str) -> Path:
 
 
 def out_dir(sid: str) -> Path:
-    return session_dir(sid) / "out"
+    meta = load_meta(sid)
+    configured = (meta or {}).get("output_dir")
+    return Path(configured) if configured else session_dir(sid) / "out"
 
 
 def _meta_path(sid: str) -> Path:
@@ -94,7 +97,9 @@ def create_session(name: str) -> dict:
         "updated": _now(),
         "status": "capturing",          # capturing | ready | processing | done | error
         "scans": {r: False for r in ALL_ROLES},
+        "capture_rois": {r: None for r in LEAF_ROLES},
         "config_overrides": {},
+        "output_dir": None,             # None => sessions/<id>/out
         "result": None,                  # summary dict after a run
     }
     scans_dir(sid).mkdir(parents=True, exist_ok=True)
@@ -114,11 +119,38 @@ def list_sessions() -> list[dict]:
     return out
 
 
-def record_scan(sid: str, role: str) -> dict:
+def record_scan(sid: str, role: str, roi_mm=None) -> dict:
     meta = load_meta(sid)
     meta["scans"][role] = True
-    if all(meta["scans"][r] for r in LEAF_ROLES) and meta["status"] == "capturing":
-        meta["status"] = "ready"
+    if role in LEAF_ROLES:
+        meta.setdefault("capture_rois", {})[role] = list(roi_mm) if roi_mm else None
+    # Any replacement source makes prior outputs stale. Keep the files on disk
+    # until the next run, but do not present them as results for the new capture.
+    meta["result"] = None
+    meta["status"] = "ready" if all(meta["scans"][r] for r in LEAF_ROLES) else "capturing"
+    return save_meta(meta)
+
+
+def reset_scans(sid: str) -> dict:
+    """Remove captured source images and return a session to its first scan."""
+    meta = load_meta(sid)
+    scan_root = scans_dir(sid)
+    for role in ALL_ROLES:
+        for suffix in (".png", ".bmp", ".tif", ".tiff"):
+            (scan_root / f"{role}{suffix}").unlink(missing_ok=True)
+    preview_root = scan_root / "previews"
+    if preview_root.exists():
+        for path in preview_root.iterdir():
+            if path.is_file():
+                path.unlink(missing_ok=True)
+        try:
+            preview_root.rmdir()
+        except OSError:
+            pass
+    meta["scans"] = {role: False for role in ALL_ROLES}
+    meta["capture_rois"] = {role: None for role in LEAF_ROLES}
+    meta["status"] = "capturing"
+    meta["result"] = None
     return save_meta(meta)
 
 
@@ -133,6 +165,20 @@ def set_status(sid: str, status: str, result: dict | None = None) -> dict:
 def set_overrides(sid: str, overrides: dict) -> dict:
     meta = load_meta(sid)
     meta["config_overrides"] = overrides or {}
+    return save_meta(meta)
+
+
+def set_output_dir(sid: str, value: str | None) -> dict:
+    """Store an optional absolute result folder for this session."""
+    meta = load_meta(sid)
+    raw = (value or "").strip()
+    if not raw:
+        meta["output_dir"] = None
+        return save_meta(meta)
+    expanded = Path(os.path.expandvars(raw)).expanduser()
+    if not expanded.is_absolute():
+        raise ValueError("Save folder must be an absolute path")
+    meta["output_dir"] = str(expanded.resolve())
     return save_meta(meta)
 
 

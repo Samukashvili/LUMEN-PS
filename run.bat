@@ -1,11 +1,12 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
 rem LUMEN-PS local launcher.  This project deliberately has no Node/npm step.
 set "ROOT=%~dp0"
 cd /d "%ROOT%"
 set "PORT=8756"
 set "URL=http://127.0.0.1:%PORT%"
+set "EXPECTED_BACKEND=2026.07-smart-roi-v5"
 set "VENV=%ROOT%.venv"
 set "VENV_PY=%VENV%\Scripts\python.exe"
 set "RUNTIME=%ROOT%.lumen-ps"
@@ -47,12 +48,22 @@ if not exist "%RUNTIME%" mkdir "%RUNTIME%" >nul 2>nul
 if not exist "%LUMEN_ICON%" call :make_icon
 call :make_shortcuts
 
-rem Do not start a second server if this launcher is opened again.
+rem Reuse a current server, but replace an older LUMEN-PS process after updates.
 netstat -ano | findstr /r /c:":%PORT% .*LISTENING" >nul 2>nul
 if not errorlevel 1 (
-  echo [bench] LUMEN-PS is already running at %URL%
-  start "" "%URL%"
-  goto :end
+  set "BACKEND_VERSION="
+  for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -Command "try { (Invoke-RestMethod '%URL%/api/version' -TimeoutSec 2).version } catch { '' }"`) do set "BACKEND_VERSION=%%V"
+  if "!BACKEND_VERSION!"=="%EXPECTED_BACKEND%" (
+    echo [bench] LUMEN-PS is already running at %URL%
+    start "" "%URL%"
+    goto :end
+  )
+  set "IS_LUMEN="
+  for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -Command "try { if ((Invoke-WebRequest '%URL%/' -UseBasicParsing -TimeoutSec 2).Content -match 'LUMEN-PS') { 'yes' } } catch { '' }"`) do set "IS_LUMEN=%%V"
+  if not "!IS_LUMEN!"=="yes" goto :port_in_use
+  echo [update] Restarting the older LUMEN-PS scan engine...
+  for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%PORT% .*LISTENING"') do taskkill /PID %%P /F >nul 2>nul
+  timeout /t 1 /nobreak >nul
 )
 
 echo.
@@ -81,6 +92,11 @@ goto :failed
 
 :setup_failed
 echo [error] Setup failed. Check the messages above, then run this file again.
+goto :failed
+
+:port_in_use
+echo [error] Port %PORT% is occupied by another application.
+echo [error] Close that application or change PORT in run.bat.
 goto :failed
 
 :failed

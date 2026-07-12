@@ -63,13 +63,26 @@
   </form>
 </div>
 
+<div id="reset-scans-dialog" class="modal-backdrop" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="reset-scans-title"
+       aria-describedby="reset-scans-description">
+    <div class="eyebrow">Destructive action</div>
+    <h2 id="reset-scans-title">Reset every scan?</h2>
+    <p id="reset-scans-description">This permanently removes k0 through k3 and any optional reference scans.
+      Scan settings and exported result files are preserved, but the session returns to its first capture.</p>
+    <div class="modal-actions">
+      <button id="reset-scans-cancel" class="btn btn--ghost" type="button">Keep scans</button>
+      <button id="reset-scans-confirm" class="btn btn--danger" type="button">Reset all scans</button>
+    </div>
+  </div>
+</div>
+
 <!-- MAIN SHELL -->
 <div id="shell" class="shell" hidden>
   <nav class="stages" aria-label="Workflow stages">
     <button class="stage" data-stage="capture"><span class="stage-n">1</span><span class="stage-l">Capture</span></button>
-    <button class="stage" data-stage="configure"><span class="stage-n">2</span><span class="stage-l">Configure</span></button>
-    <button class="stage" data-stage="process"><span class="stage-n">3</span><span class="stage-l">Process</span></button>
-    <button class="stage" data-stage="results"><span class="stage-n">4</span><span class="stage-l">Results</span></button>
+    <button class="stage" data-stage="process"><span class="stage-n">2</span><span class="stage-l">Process</span></button>
+    <button class="stage" data-stage="results"><span class="stage-n">3</span><span class="stage-l">Results</span></button>
   </nav>
 
   <main id="stage-main" class="stage-main"></main>

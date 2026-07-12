@@ -1,25 +1,88 @@
-// LUMEN-PS — front controller: boot, stages, telemetry, live log.
+// LUMEN-PS front controller: capture, persistent processing, and result inspection.
 import { api, streamJob } from './api.js';
 import { Relight } from './relight.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const STAGES = ['capture', 'configure', 'process', 'results'];
-const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1, '[valid]': 1,
-  '[calib]': 2, '[solve]': 3, '[integrate]': 4, '[out]': 5, '[qa]': 5, '[done]': 6 };
+const EXPECTED_BACKEND = '2026.07-smart-roi-v5';
+const STAGES = ['capture', 'process', 'results'];
+const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
+  '[valid]': 1, '[calib]': 2, '[solve]': 3, '[integrate]': 4,
+  '[out]': 5, '[qa]': 5, '[done]': 6 };
 const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Integrate', 'Output'];
 
-const S = { device: null, sid: null, meta: null, cfg: null, overrides: {},
-  stage: 'capture', relight: null, closeWS: null, log: [] };
+const RESULT_META = {
+  'normal_gl.png': ['OpenGL normal', 'Material map'],
+  'normal_dx.png': ['DirectX normal', 'Material map'],
+  'albedo_srgb.png': ['Albedo (sRGB)', 'Material map'],
+  'albedo.png': ['Albedo (linear)', 'Material map'],
+  'alpha.png': ['Alpha', 'Material map'],
+  'height.png': ['Height', 'Material map'],
+  'albedo_srgb_rgba.png': ['Albedo RGBA', 'Material map'],
+  'normal_gl_rgba.png': ['Normal RGBA', 'Material map'],
+  'qa/normal_preview.png': ['Normal preview', 'Diagnostics'],
+  'qa/subsurface_hint.png': ['Subsurface hint', 'Diagnostics'],
+  'qa/mask_agreement.png': ['Mask agreement', 'Diagnostics'],
+  'qa/rejection_coverage.png': ['Rejection coverage', 'Diagnostics'],
+};
 
-// ---- tiny helpers ---------------------------------------------------------
+const S = {
+  device: null, backendCurrent: true, sid: null, meta: null, cfg: null, overrides: {},
+  stage: 'capture', relight: null, closeWS: null, log: [],
+  jobKind: null, jobStatus: 'idle', jobCursor: 0, jobResult: null,
+  processStage: 0, resultMode: 'relight', selectedResult: null,
+};
+
+// ---- helpers --------------------------------------------------------------
 const getPath = (o, p) => p.split('.').reduce((a, k) => (a ? a[k] : undefined), o);
 function setPath(o, p, v) {
   const ks = p.split('.'); let a = o;
   ks.slice(0, -1).forEach(k => (a = a[k] = a[k] || {}));
   a[ks.at(-1)] = v;
 }
-const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const esc = s => String(s ?? '').replace(/[&<>]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const escAttr = s => esc(s).replace(/"/g, '&quot;');
+const bytes = n => n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+
+function toggleControl(path, label, note) {
+  return `<div class="field"><div class="lab"><b>${label}</b><small>${note}</small></div>
+    <button class="tgl" type="button" role="switch" data-path="${path}"
+      aria-checked="${!!getPath(S.cfg, path)}" aria-label="${label}"></button></div>`;
+}
+function numberControl(path, label, note, step = 1, min = null) {
+  return `<div class="field"><div class="lab"><b>${label}</b><small>${note}</small></div>
+    <input type="number" data-path="${path}" step="${step}" ${min === null ? '' : `min="${min}"`}
+      value="${getPath(S.cfg, path)}" aria-label="${label}"></div>`;
+}
+function selectControl(path, label, note, options) {
+  const current = String(getPath(S.cfg, path));
+  return `<div class="field"><div class="lab"><b>${label}</b><small>${note}</small></div>
+    <select data-path="${path}" aria-label="${label}">${options.map(([value, text]) =>
+      `<option value="${value}" ${current === String(value) ? 'selected' : ''}>${text}</option>`).join('')}
+    </select></div>`;
+}
+function wireConfigControls(root) {
+  root.querySelectorAll('.tgl[data-path]').forEach(ctrl => ctrl.addEventListener('click', () => {
+    ctrl.setAttribute('aria-checked', String(ctrl.getAttribute('aria-checked') !== 'true'));
+  }));
+}
+function formToOverrides(root) {
+  const ov = structuredClone(S.overrides);
+  root.querySelectorAll('[data-path]').forEach(ctrl => {
+    const path = ctrl.dataset.path; let value;
+    if (ctrl.classList.contains('tgl')) value = ctrl.getAttribute('aria-checked') === 'true';
+    else if (ctrl.tagName === 'SELECT') value = isNaN(+ctrl.value) ? ctrl.value : +ctrl.value;
+    else value = +ctrl.value;
+    setPath(ov, path, value);
+  });
+  S.overrides = ov;
+}
+async function saveConfig() {
+  await api.setConfig(S.sid, S.overrides);
+  const bundle = await api.getConfig(S.sid);
+  S.cfg = bundle.config; S.overrides = bundle.overrides || S.overrides;
+}
 
 // ---- boot -----------------------------------------------------------------
 async function boot() {
@@ -27,429 +90,455 @@ async function boot() {
   $('#btn-new').addEventListener('click', openNewSession);
   $('#new-session-cancel').addEventListener('click', closeNewSession);
   $('#new-session-form').addEventListener('submit', newSession);
+  $('#reset-scans-cancel').addEventListener('click', closeResetScans);
+  $('#reset-scans-confirm').addEventListener('click', resetAllScans);
   document.querySelectorAll('.stage').forEach(b =>
     b.addEventListener('click', () => gotoStage(b.dataset.stage)));
-
   try {
-    S.device = await api.device();
-  } catch { S.device = { connected: false, note: 'Bench API unreachable.' }; }
-  paintDevice();
-  await paintRecent();
+    const [device, backend] = await Promise.all([api.device(), api.version()]);
+    S.device = device; S.backendCurrent = backend.version === EXPECTED_BACKEND;
+  } catch {
+    S.device = { connected: false, note: 'Restart LUMEN-PS to load the updated scan engine.' };
+    S.backendCurrent = false;
+  }
+  paintDevice(); await paintRecent();
 }
 
 function paintDevice() {
   const d = S.device, pill = $('#device-pill'), bd = $('#boot-device');
-  pill.className = 'pill ' + (d.connected ? 'pill--ok' : 'pill--err');
-  $('.pill-text', pill).textContent = d.connected
-    ? `${d.name} · ${d.max_bit_depth}-bit` : 'no scanner';
-  bd.querySelector('.led').style.color = d.connected ? 'var(--ok)' : 'var(--err)';
-  $('.boot-device-text', bd).innerHTML = d.connected
-    ? `bench online · <b>${esc(d.name)}</b> · ${d.dpi_options.join('/')} dpi · ${d.max_bit_depth}-bit`
+  const ready = d.connected && S.backendCurrent;
+  pill.className = 'pill ' + (ready ? 'pill--ok' : 'pill--err');
+  $('.pill-text', pill).textContent = !S.backendCurrent ? 'restart required'
+    : d.connected ? `${d.name} - ${d.max_bit_depth}-bit` : 'no scanner';
+  bd.querySelector('.led').style.color = ready ? 'var(--ok)' : 'var(--err)';
+  $('.boot-device-text', bd).innerHTML = !S.backendCurrent
+    ? 'scan engine update pending - close the old console and run <b>run.bat</b> again'
+    : d.connected
+    ? `bench online - <b>${esc(d.name)}</b> - ${d.dpi_options.join('/')} dpi - ${d.max_bit_depth}-bit`
     : esc(d.note || 'no scanner detected');
 }
-
 async function paintRecent() {
-  const list = await api.sessions();
-  const ul = $('#recent-list');
+  const list = await api.sessions(), ul = $('#recent-list');
   if (!list.length) { ul.innerHTML = '<li class="muted">none yet</li>'; return; }
   ul.innerHTML = '';
   list.slice(0, 8).forEach(m => {
-    const li = document.createElement('li');
-    li.className = 'recent-item';
+    const li = document.createElement('li'); li.className = 'recent-item';
     const tag = m.status === 'done' ? 'tag--done' : m.status === 'ready' ? 'tag--ready' : '';
-    li.innerHTML = `<span class="r-name">${esc(m.name)}</span>
-      <span class="r-meta">${m.created.slice(0, 16).replace('T', ' ')}
-      <span class="tag ${tag}">${m.status}</span></span>`;
-    li.onclick = () => enterSession(m.id);
-    ul.appendChild(li);
+    li.innerHTML = `<span class="r-name">${esc(m.name)}</span><span class="r-meta">
+      ${m.created.slice(0, 16).replace('T', ' ')} <span class="tag ${tag}">${m.status}</span></span>`;
+    li.onclick = () => enterSession(m.id); ul.appendChild(li);
   });
 }
-
 function openNewSession() {
-  const dialog = $('#new-session-dialog');
-  dialog.hidden = false;
-  const input = $('#new-session-name');
-  input.focus(); input.select();
+  $('#new-session-dialog').hidden = false;
+  const input = $('#new-session-name'); input.focus(); input.select();
 }
 function closeNewSession() { $('#new-session-dialog').hidden = true; }
+function openResetScans() {
+  $('#reset-scans-dialog').hidden = false;
+  $('#reset-scans-cancel').focus();
+}
+function closeResetScans() { $('#reset-scans-dialog').hidden = true; }
 async function newSession(e) {
   e.preventDefault();
-  const input = $('#new-session-name');
-  const submit = $('#new-session-form button[type="submit"]');
+  const input = $('#new-session-name'), submit = $('#new-session-form button[type="submit"]');
   submit.disabled = true;
-  try {
-    const m = await api.newSession(input.value.trim() || 'Untitled leaf');
-    closeNewSession();
-    await enterSession(m.id);
-  } catch (err) {
-    logLine('[error] could not create session: ' + err.message);
-  } finally {
-    submit.disabled = false;
-  }
+  try { const m = await api.newSession(input.value.trim() || 'Untitled leaf'); closeNewSession(); await enterSession(m.id); }
+  catch (err) { logLine('[error] could not create session: ' + err.message); }
+  finally { submit.disabled = false; }
 }
 
 async function enterSession(sid) {
-  S.sid = sid;
+  if (S.closeWS) { S.closeWS(); S.closeWS = null; }
+  Object.assign(S, { sid, log: [], jobKind: null, jobStatus: 'idle', jobCursor: 0,
+    jobResult: null, processStage: 0, selectedResult: null, resultMode: 'relight' });
+  $('#log-console').innerHTML = '';
   await refreshMeta();
   const bundle = await api.getConfig(sid);
   S.cfg = bundle.config; S.overrides = bundle.overrides || {};
   $('#boot').hidden = true; $('#shell').hidden = false;
-  const start = S.meta.status === 'done' ? 'results'
-    : S.meta.status === 'ready' ? 'configure' : 'capture';
+  const start = S.meta.status === 'done' ? 'results' : S.meta.ready ? 'process' : 'capture';
   gotoStage(start);
 }
-
-async function refreshMeta() { S.meta = await api.session(S.sid); paintTelemetry(); }
+async function refreshMeta() { S.meta = await api.session(S.sid); paintTelemetry(); paintStageNav(); }
 
 // ---- stage routing --------------------------------------------------------
-function gotoStage(name) {
-  S.stage = name;
+function paintStageNav() {
+  if (!S.meta) return;
   document.querySelectorAll('.stage').forEach(b => {
-    const i = STAGES.indexOf(b.dataset.stage), cur = STAGES.indexOf(name);
-    b.classList.toggle('active', b.dataset.stage === name);
+    b.classList.toggle('active', b.dataset.stage === S.stage);
     b.classList.toggle('done', doneStage(b.dataset.stage));
     b.disabled = (b.dataset.stage === 'results' && S.meta.status !== 'done')
-      || ((b.dataset.stage === 'configure' || b.dataset.stage === 'process') && !S.meta.ready);
+      || (b.dataset.stage === 'process' && !S.meta.ready);
   });
-  ({ capture: renderCapture, configure: renderConfigure,
-     process: renderProcess, results: renderResults }[name])();
+}
+function gotoStage(name) {
+  S.stage = name; paintStageNav();
+  const render = { capture: renderCapture, process: renderProcess, results: renderResults }[name];
+  Promise.resolve(render()).catch(err => {
+    $('#stage-main').innerHTML = `<div class="err-box">Could not render ${esc(name)}.\n${esc(err.message)}</div>`;
+    logLine('[error] ' + err.message);
+  });
 }
 function doneStage(name) {
   if (name === 'capture') return S.meta.ready;
-  if (name === 'results') return S.meta.status === 'done';
-  if (name === 'process') return S.meta.status === 'done';
-  return false;
+  return (name === 'process' || name === 'results') && S.meta.status === 'done';
 }
 
-// ---- CAPTURE --------------------------------------------------------------
+// ---- Capture --------------------------------------------------------------
 function renderCapture() {
   const m = S.meta, c = S.cfg, next = LEAF.find(r => !m.scans[r]);
   const dpiOpts = S.device?.dpi_options?.length ? S.device.dpi_options : [300, 600, 1200];
+  const smart = c.capture.smart_roi || { enabled: true, preview_dpi: 75 };
   const main = $('#stage-main');
   main.innerHTML = `
-    <h2 class="stage-title">Capture</h2>
-    <p class="stage-lead">Four scans of the same leaf, rotated a quarter turn between
-      each. The lamp is fixed, so rotating the leaf changes the light direction —
-      four rotations give four lights.</p>
-    <div class="capture-settings">
-      <label for="capture-dpi">Scan resolution</label>
-      <select id="capture-dpi" aria-describedby="capture-dpi-note">
-        ${dpiOpts.map(dpi => `<option value="${dpi}" ${dpi === c.capture.dpi ? 'selected' : ''}>${dpi} dpi</option>`).join('')}
-      </select>
-      <span id="capture-dpi-note">Applied to every scan in this session.</span>
-      <span id="capture-dpi-status" class="mono muted" aria-live="polite"></span>
+    <div class="stage-heading"><div><div class="eyebrow">Stage 1 / Acquisition</div>
+      <h2 class="stage-title">Capture</h2><p class="stage-lead">Rotate the subject a quarter turn between four locked-light scans.</p></div>
+      <div class="capture-readout"><b>${c.capture.dpi}</b><span>detail dpi</span></div></div>
+    <div class="capture-settings capture-settings--expanded">
+      <div><label for="capture-dpi">Detail resolution</label>
+        <select id="capture-dpi">${dpiOpts.map(d => `<option value="${d}" ${d === c.capture.dpi ? 'selected' : ''}>${d} dpi</option>`).join('')}</select></div>
+      <div class="capture-speed"><button class="tgl" id="smart-roi" type="button" role="switch"
+        aria-checked="${!!smart.enabled}" aria-label="Fast area scan"></button>
+        <div><b>Fast area scan</b><span>${smart.preview_dpi || 75} dpi locator pass, then detail-scan only the detected area.</span></div></div>
+      <span id="capture-settings-status" class="mono ${S.backendCurrent ? 'muted' : 'err'}" aria-live="polite">
+        ${S.backendCurrent ? '' : 'Backend update pending. Restart LUMEN-PS before scanning.'}</span>
     </div>
-    <div class="instr">
-      <div>
-        <div class="eyebrow">Protocol</div>
-        <p style="margin:.4em 0 0">Place the leaf on the glass, same face up, and close the lid.
-        After each scan, rotate it <span class="kbd">90° clockwise</span> about its centre and scan again.</p>
-      </div>
-    </div>
+    <div class="instr"><div><div class="eyebrow">Rotation protocol</div>
+      <p style="margin:.4em 0 0">Keep the same face up. After each scan, rotate it <span class="kbd">90&deg; clockwise</span> about its centre.</p></div></div>
     <div class="scan-grid" id="slots">${LEAF.map(slot).join('')}</div>
-    <details class="expander"><summary>Optional scans (advanced)</summary>
-      <p class="stage-lead" style="margin-top:8px">Not required — elevation self-calibrates
-      and the flat-field is fit from the background. Add these only if you want them.</p>
-      <div class="scan-grid">${['flat', 'calib0', 'calib90'].map(slot).join('')}</div>
-    </details>
-    <div class="stage-foot">
-      <button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : 'All scans captured'}</button>
-      <button class="btn" id="to-config" ${m.ready ? '' : 'disabled'}>Continue to Configure &rarr;</button>
-    </div>`;
-  main.querySelectorAll('[data-scan]').forEach(b =>
-    b.addEventListener('click', () => doCapture(b.dataset.scan)));
-  const sb = $('#scan-btn');
-  if (next) sb.addEventListener('click', () => doCapture(next)); else sb.disabled = true;
-  $('#to-config').addEventListener('click', () => gotoStage('configure'));
-  $('#capture-dpi').addEventListener('change', persistCaptureDpi);
+    <details class="expander"><summary>Optional acquisition references</summary>
+      <p class="stage-lead" style="margin-top:8px">Flat-field and corrugated calibration are available when the bench needs tighter calibration.</p>
+      <div class="scan-grid scan-grid--optional">${['flat', 'calib0', 'calib90'].map(slot).join('')}</div></details>
+    <div class="stage-foot"><div><button class="btn btn--danger btn--sm" id="reset-scans"
+      ${Object.values(m.scans).some(Boolean) ? '' : 'disabled'}>Reset all scans</button>
+      <span id="capture-job-note" class="mono muted"></span></div>
+      <div class="foot-actions"><button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : 'All scans captured'}</button>
+      <button class="btn" id="to-process" ${m.ready ? '' : 'disabled'}>Continue to Process &rarr;</button></div></div>`;
+  main.querySelectorAll('[data-scan]').forEach(b => b.addEventListener('click', () => doCapture(b.dataset.scan)));
+  const sb = $('#scan-btn'); if (next) sb.addEventListener('click', () => doCapture(next)); else sb.disabled = true;
+  if (!S.backendCurrent) sb.disabled = true;
+  $('#to-process').addEventListener('click', () => gotoStage('process'));
+  $('#reset-scans').addEventListener('click', openResetScans);
+  $('#capture-dpi').addEventListener('change', persistCaptureSettings);
+  $('#smart-roi').addEventListener('click', e => {
+    const b = e.currentTarget; b.setAttribute('aria-checked', String(b.getAttribute('aria-checked') !== 'true'));
+    persistCaptureSettings();
+  });
+  if (S.jobKind?.startsWith('capture:') && ['queued', 'running'].includes(S.jobStatus)) {
+    disableActions(true); $('#capture-job-note').textContent = 'Scanner job continues in the background...';
+  }
+}
+async function persistCaptureSettings() {
+  const dpi = +$('#capture-dpi').value;
+  const enabled = $('#smart-roi').getAttribute('aria-checked') === 'true';
+  const status = $('#capture-settings-status');
+  setPath(S.overrides, 'capture.dpi', dpi); setPath(S.overrides, 'capture.smart_roi.enabled', enabled);
+  status.textContent = 'saving...';
+  try { await saveConfig(); status.textContent = `${dpi} dpi - ${enabled ? 'fast area scan on' : 'full bed'}`; }
+  catch (err) { status.textContent = 'could not save'; logLine('[error] capture settings: ' + err.message); }
+}
+function slot(role) {
+  const done = S.meta.scans[role];
+  const label = { flat: 'flat-field', calib0: 'calib 0&deg;', calib90: 'calib 90&deg;' }[role] || role;
+  const roi = (S.meta.capture_rois || {})[role];
+  return `<div class="slot ${done ? 'done' : ''}" id="slot-${role}"><div class="slot-cap"><span>${label}</span>
+    ${roi ? '<span class="slot-mode">ROI</span>' : '<span class="led roleled"></span>'}</div>
+    <div class="slot-body">${done ? `<img src="${api.scanURL(S.sid, role)}" alt="${role}">
+      <div class="slot-actions"><button class="btn btn--sm" type="button" data-scan="${role}">Rescan ${role}</button></div>`
+      : `<div class="slot-hint">no scan yet<br><button class="btn btn--sm btn--ghost" data-scan="${role}">Scan</button></div>`}</div></div>`;
+}
+async function doCapture(role) {
+  if (!S.backendCurrent) {
+    logLine('[error] Restart LUMEN-PS to load the smart-area scan engine.');
+    return;
+  }
+  await persistCaptureSettings();
+  const el = $('#slot-' + role); if (el) { el.classList.add('busy'); el.classList.remove('done'); }
+  disableActions(true); openLog(); logLine(`[scan] requesting ${role}...`);
+  try {
+    const started = await api.capture(S.sid, role);
+    Object.assign(S, { jobKind: started.kind, jobStatus: started.status, jobCursor: 0 });
+    watchCurrentJob(0);
+  } catch (err) { logLine('[error] ' + err.message); disableActions(false); }
 }
 
-async function persistCaptureDpi(e) {
-  const select = e.currentTarget, status = $('#capture-dpi-status');
-  const dpi = +select.value;
-  setPath(S.overrides, 'capture.dpi', dpi);
-  select.disabled = true;
-  status.textContent = 'saving...';
+async function resetAllScans() {
+  const button = $('#reset-scans-confirm');
+  button.disabled = true;
   try {
-    await save();
-    status.textContent = `locked at ${dpi} dpi`;
+    await api.resetScans(S.sid);
+    closeResetScans();
+    await refreshMeta();
+    S.jobKind = null; S.jobStatus = 'idle'; S.processStage = 0; S.jobResult = null;
+    logLine('[scan] all captures reset; ready for k0.');
+    renderCapture();
   } catch (err) {
-    status.textContent = 'could not save';
-    logLine('[error] could not save capture resolution: ' + err.message);
+    logLine('[error] could not reset scans: ' + err.message);
   } finally {
-    select.disabled = false;
+    button.disabled = false;
   }
 }
 
-function slot(role) {
-  const done = S.meta.scans[role];
-  const label = { flat: 'flat-field', calib0: 'calib 0°', calib90: 'calib 90°' }[role] || role;
-  return `<div class="slot ${done ? 'done' : ''}" id="slot-${role}">
-    <div class="slot-cap"><span>${label}</span>
-      <span class="led roleled"></span></div>
-    <div class="slot-body">${done
-      ? `<img src="${api.scanURL(S.sid, role)}" alt="${role}">`
-      : `<div class="slot-hint">no scan yet<br><button class="btn btn--sm btn--ghost" data-scan="${role}">Scan</button></div>`}
-    </div></div>`;
-}
-
-async function doCapture(role) {
-  const el = $('#slot-' + role); if (el) { el.classList.add('busy'); el.classList.remove('done'); }
-  disableActions(true);
-  openLog(); logLine(`[scan] requesting ${role}…`);
-  try { await api.capture(S.sid, role); } catch (e) { logLine('[error] ' + e.message); disableActions(false); return; }
-  streamUntilDone(async (st) => {
-    disableActions(false);
-    await refreshMeta();
-    if (st.status === 'done') renderCapture();
-    else if (el) el.classList.remove('busy');
-  });
-}
-
-// ---- CONFIGURE ------------------------------------------------------------
-function renderConfigure() {
-  const c = S.cfg, dpiOpts = (S.device?.dpi_options?.length ? S.device.dpi_options : [300, 600, 1200]);
-  const main = $('#stage-main');
-  const sel = (path, opts) => `<select data-path="${path}">${opts.map(o =>
-    `<option ${String(getPath(c, path)) === String(o) ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
-  const num = (path, step = 1) => `<input type="number" step="${step}" data-path="${path}" value="${getPath(c, path)}">`;
-  const tgl = (path) => `<button class="tgl" role="switch" data-path="${path}"
-    aria-checked="${!!getPath(c, path)}"></button>`;
-  const field = (t, sub, ctrl) => `<div class="field"><div class="lab"><b>${t}</b><small>${sub}</small></div>${ctrl}</div>`;
-
-  main.innerHTML = `
-    <h2 class="stage-title">Configure</h2>
-    <p class="stage-lead">Defaults are tuned for a grape leaf at 600 dpi. Adjust if needed —
-      every value is saved with this session.</p>
-    <div class="card grid">
-      ${field('Scan resolution', 'dpi · higher = finer veins, larger files', sel('capture.dpi', dpiOpts))}
-      ${field('Outlier rejection', 'drop specular/shadow samples per pixel', sel('solve.rejection', ['none', 'drop_brightest', 'drop_brightest_and_darkest']))}
-      ${field('Edge trim', 'px eroded to kill the background-mix boundary ring', num('output.edge.trim_px'))}
-      ${field('Texture padding', 'px of bleed outside the leaf · 0 for transparent cutouts', num('output.edge.pad_px'))}
-      ${field('Alpha map', 'export the leaf silhouette + RGBA copies', tgl('output.alpha.enabled'))}
-      ${field('Alpha feather', 'px soften on the silhouette edge (0 = crisp)', num('output.alpha.feather_px', 0.5))}
-      ${field('Non-rigid align', 'correct leaf deformation between rotations', tgl('align.nonrigid.enabled'))}
-      ${field('Height map', 'integrate normals into relief (Frankot–Chellappa)', tgl('integrate.enabled'))}
-      ${field('Auto-crop', 'crop to the leaf so full-res fits in memory', tgl('runtime.auto_crop'))}
-      ${field('Working scale', '1.0 = full res · lower for a fast preview', num('runtime.scale', 0.05))}
-    </div>
-    <details class="expander"><summary>Advanced — raw overrides (JSON)</summary>
-      <p class="stage-lead" style="margin-top:8px">Any config value can be overridden here. Merged over defaults.</p>
-      <textarea id="ov-json">${esc(JSON.stringify(S.overrides, null, 2))}</textarea>
-      <div style="margin-top:10px"><button class="btn btn--sm" id="apply-json">Apply overrides</button>
-        <span id="ov-msg" class="muted mono" style="margin-left:12px"></span></div>
-    </details>
-    <div class="stage-foot">
-      <button class="btn btn--ghost" id="back-cap">&larr; Capture</button>
-      <button class="btn btn--primary" id="save-cfg">Save &amp; continue &rarr;</button>
-    </div>`;
-
-  main.querySelectorAll('[data-path]').forEach(ctrl => {
-    if (ctrl.classList.contains('tgl'))
-      ctrl.addEventListener('click', () => ctrl.setAttribute('aria-checked', ctrl.getAttribute('aria-checked') !== 'true'));
-    ctrl.addEventListener('change', () => stageFormToOverrides(main));
-  });
-  $('#apply-json').addEventListener('click', async () => {
-    try {
-      S.overrides = JSON.parse($('#ov-json').value || '{}');
-      await save(); $('#ov-msg').textContent = 'applied';
-      const b = await api.getConfig(S.sid); S.cfg = b.config; renderConfigure();
-    } catch (e) { $('#ov-msg').textContent = 'invalid JSON: ' + e.message; }
-  });
-  $('#back-cap').addEventListener('click', () => gotoStage('capture'));
-  $('#save-cfg').addEventListener('click', async () => {
-    stageFormToOverrides(main); await save(); gotoStage('process');
-  });
-}
-
-function stageFormToOverrides(main) {
-  const ov = structuredClone(S.overrides);
-  main.querySelectorAll('[data-path]').forEach(ctrl => {
-    const p = ctrl.dataset.path; let v;
-    if (ctrl.classList.contains('tgl')) v = ctrl.getAttribute('aria-checked') === 'true';
-    else if (ctrl.tagName === 'SELECT') v = isNaN(+ctrl.value) ? ctrl.value : +ctrl.value;
-    else v = +ctrl.value;
-    setPath(ov, p, v);
-  });
-  S.overrides = ov;
-}
-async function save() { await api.setConfig(S.sid, S.overrides); S.cfg = (await api.getConfig(S.sid)).config; }
-
-// ---- PROCESS --------------------------------------------------------------
+// ---- Process --------------------------------------------------------------
 function renderProcess() {
-  const c = S.cfg, done = S.meta.status === 'done';
+  const c = S.cfg, busy = S.jobKind === 'run' && ['queued', 'running'].includes(S.jobStatus);
+  const done = S.meta.status === 'done';
+  if (done && !busy) S.processStage = PSTAGES.length;
   const main = $('#stage-main');
   main.innerHTML = `
-    <h2 class="stage-title">Process</h2>
-    <p class="stage-lead">Run the photometric-stereo solve. The live log streams every
-      stage; watch the residual — low and balanced means a trustworthy result.</p>
-    <div class="summary-grid" style="margin-bottom:18px">
-      <div class="stat"><div class="n">${c.capture.dpi}</div><div class="l">dpi</div></div>
-      <div class="stat"><div class="n">${c.runtime.scale}</div><div class="l">scale</div></div>
-      <div class="stat"><div class="n">${c.solve.rejection.replace('drop_', '').replace(/_/g, ' ')}</div><div class="l">rejection</div></div>
-      <div class="stat"><div class="n">${c.runtime.auto_crop ? 'on' : 'off'}</div><div class="l">auto-crop</div></div>
+    <div class="stage-heading"><div><div class="eyebrow">Stage 2 / Reconstruction</div><h2 class="stage-title">Process</h2>
+      <p class="stage-lead">Tune the solve, choose where outputs live, then reconstruct every material and QA map.</p></div>
+      <div class="process-state ${busy ? 'is-running' : done ? 'is-done' : ''}"><span class="led"></span>
+        <div><b id="process-state-title">${busy ? 'Reconstruction running' : done ? 'Results ready' : 'Ready to solve'}</b>
+        <small id="process-state-note">${busy ? 'Safe to leave this page.' : done ? 'You can re-run with new settings.' : 'Four source scans detected.'}</small></div></div></div>
+    <div class="process-layout">
+      <section class="settings-stack" id="process-settings">
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
+          ${selectControl('solve.rejection', 'Outlier rejection', 'Remove glare and shadow samples per pixel.', [
+            ['none', 'None'], ['drop_brightest', 'Drop brightest'], ['drop_brightest_and_darkest', 'Drop brightest + darkest']])}
+          ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}</div>
+        <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Output maps</b><small>Edges, relief, and transparency.</small></div></div>
+          ${toggleControl('integrate.enabled', 'Height map', 'Integrate normals into a relief map.')}
+          ${toggleControl('output.alpha.enabled', 'Alpha map', 'Export silhouette and RGBA convenience maps.')}
+          ${numberControl('output.alpha.feather_px', 'Alpha feather', 'Softness at the silhouette edge, in pixels.', 0.5, 0)}
+          ${numberControl('output.edge.trim_px', 'Edge trim', 'Remove mixed leaf/background boundary pixels.', 1, 0)}
+          ${numberControl('output.edge.pad_px', 'Texture padding', 'Bleed outside the silhouette for mipmaps.', 1, 0)}</div>
+        <div class="settings-section"><div class="settings-title"><span>03</span><div><b>Performance</b><small>Memory and preview-quality controls.</small></div></div>
+          ${toggleControl('runtime.auto_crop', 'Auto-crop in memory', 'Crop full-bed legacy scans before solving.')}
+          ${numberControl('runtime.scale', 'Working scale', '1.0 is full resolution; lower values are faster.', 0.05, 0.05)}</div>
+        <details class="expander"><summary>Advanced raw overrides</summary><textarea id="ov-json">${esc(JSON.stringify(S.overrides, null, 2))}</textarea>
+          <button class="btn btn--sm" id="apply-json" type="button">Apply JSON</button></details>
+      </section>
+      <section class="process-console">
+        <div class="save-destination"><div class="eyebrow">Result destination</div><label for="output-dir">Save folder</label>
+          <input id="output-dir" type="text" value="${escAttr(S.meta.output_dir || '')}" placeholder="Default: this session's workspace">
+          <small>Enter an absolute folder path. Leave empty to keep results with the session.</small></div>
+        <div class="prog"><div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
+          <div class="prog-stages" id="pstages">${PSTAGES.map(s => `<span class="pstage">${s}</span>`).join('')}</div></div>
+        <div id="run-summary"></div>
+      </section>
     </div>
-    <div class="prog"><div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
-      <div class="prog-stages" id="pstages">${PSTAGES.map(s => `<span class="pstage">${s}</span>`).join('')}</div>
-    </div>
-    <div id="run-summary" style="margin-top:18px"></div>
-    <div class="stage-foot">
-      <button class="btn btn--ghost" id="back-cfg">&larr; Configure</button>
-      <button class="btn btn--primary" id="run-btn">${done ? 'Re-run' : 'Run reconstruction'}</button>
-    </div>`;
-  if (done) showSummary(S.meta.result);
-  $('#back-cfg').addEventListener('click', () => gotoStage('configure'));
+    <div class="stage-foot"><button class="btn btn--ghost" id="back-cap">&larr; Capture</button>
+      <div class="foot-actions"><span id="process-save-status" class="mono muted" aria-live="polite"></span>
+      <button class="btn btn--primary" id="run-btn">${busy ? 'Reconstruction running...' : done ? 'Re-run reconstruction' : 'Run reconstruction'}</button></div></div>`;
+  wireConfigControls(main);
+  $('#back-cap').addEventListener('click', () => gotoStage('capture'));
   $('#run-btn').addEventListener('click', doRun);
-}
-
-async function doRun() {
-  disableActions(true); openLog();
-  document.querySelectorAll('.pstage').forEach(p => p.classList.remove('on', 'done'));
-  $('#pfill').style.width = '0%'; $('#run-summary').innerHTML = '';
-  logLine('[run] starting reconstruction…');
-  try { await api.run(S.sid); } catch (e) { logLine('[error] ' + e.message); disableActions(false); return; }
-  streamUntilDone(async (st) => {
-    disableActions(false); await refreshMeta();
-    if (st.status === 'done') {
-      setStageProgress(6); showSummary(st.result);
-      document.querySelectorAll('.stage').forEach(b => b.classList.toggle('done', doneStage(b.dataset.stage)));
-      $('#run-summary').insertAdjacentHTML('beforeend',
-        `<div style="margin-top:16px"><button class="btn btn--primary" id="to-res">View results &rarr;</button></div>`);
-      $('#to-res').addEventListener('click', () => gotoStage('results'));
-      $('.stage[data-stage="results"]').disabled = false;
-    } else {
-      $('#run-summary').innerHTML = `<div class="err-box">Reconstruction failed. See the raw log.\n${esc(st.error || '')}</div>`;
-    }
+  $('#apply-json').addEventListener('click', async () => {
+    const status = $('#process-save-status');
+    try { S.overrides = JSON.parse($('#ov-json').value || '{}'); await saveConfig(); status.textContent = 'JSON applied'; renderProcess(); }
+    catch (err) { status.textContent = 'Invalid JSON: ' + err.message; }
   });
+  setStageProgress(S.processStage);
+  if (done && S.meta.result) showSummary(S.meta.result, true);
+  if (busy) disableProcessControls(true);
+  restoreJobState();
 }
-
-function showSummary(r) {
-  if (!r) return;
-  $('#run-summary').innerHTML = `
-    <div class="summary-grid">
-      <div class="stat"><div class="n">${r.az0.toFixed(0)}°</div><div class="l">azimuth az0</div></div>
-      <div class="stat"><div class="n">${r.el.toFixed(0)}°</div><div class="l">elevation</div></div>
-      <div class="stat"><div class="n">${Math.max(...r.residual_means).toFixed(3)}</div><div class="l">max residual</div></div>
-      <div class="stat"><div class="n">${(r.valid_px / 1e6).toFixed(1)}M</div><div class="l">solved px</div></div>
-    </div>`;
+function disableProcessControls(on) {
+  document.querySelectorAll('#process-settings input,#process-settings select,#process-settings button,#output-dir,#run-btn')
+    .forEach(el => { el.disabled = on; });
 }
-
-function setStageProgress(idx) {
+async function persistProcessSettings() {
+  const main = $('#stage-main'), status = $('#process-save-status');
+  formToOverrides(main); status.textContent = 'saving settings...';
+  await saveConfig();
+  const saved = await api.setOutputDir(S.sid, $('#output-dir').value.trim() || null);
+  S.meta.output_dir = saved.output_dir; status.textContent = `saving to ${saved.effective_output_dir}`;
+}
+async function doRun() {
+  disableProcessControls(true); openLog();
+  try {
+    await persistProcessSettings();
+    Object.assign(S, { processStage: 0, jobKind: 'run', jobStatus: 'queued', jobCursor: 0, jobResult: null });
+    setStageProgress(0); $('#run-summary').innerHTML = '';
+    logLine('[run] starting reconstruction...');
+    await api.run(S.sid); watchCurrentJob(0); renderProcess();
+  } catch (err) { logLine('[error] ' + err.message); disableProcessControls(false); }
+}
+async function restoreJobState() {
+  try {
+    const job = await api.job(S.sid);
+    if (job.kind !== 'run') return;
+    S.jobKind = job.kind; S.jobStatus = job.status; S.jobResult = job.result;
+    S.processStage = stageFromLines(job.log || []);
+    if (S.jobCursor === 0 && job.log?.length) {
+      job.log.forEach(logLine); S.jobCursor = job.log.length;
+    }
+    setStageProgress(S.processStage);
+    if (['queued', 'running'].includes(job.status)) {
+      disableProcessControls(true); if (!S.closeWS) watchCurrentJob(S.jobCursor);
+    } else if (job.status === 'done' && job.result) showSummary(job.result, true);
+    else if (job.status === 'error') showRunError(job.error);
+  } catch (err) { logLine('[error] could not restore process state: ' + err.message); }
+}
+function showSummary(r, withAction = false) {
+  const box = $('#run-summary'); if (!box || !r) return;
+  box.innerHTML = `<div class="summary-grid"><div class="stat"><div class="n">${r.az0.toFixed(0)}&deg;</div><div class="l">azimuth</div></div>
+    <div class="stat"><div class="n">${r.el.toFixed(0)}&deg;</div><div class="l">elevation</div></div>
+    <div class="stat"><div class="n">${Math.max(...r.residual_means).toFixed(3)}</div><div class="l">max residual</div></div>
+    <div class="stat"><div class="n">${(r.valid_px / 1e6).toFixed(1)}M</div><div class="l">solved px</div></div></div>
+    ${withAction ? '<button class="btn btn--primary result-jump" id="to-results">Inspect results &rarr;</button>' : ''}`;
+  $('#to-results')?.addEventListener('click', () => gotoStage('results'));
+}
+function showRunError(error) {
+  const box = $('#run-summary'); if (box) box.innerHTML = `<div class="err-box">Reconstruction failed.\n${esc(error || '')}</div>`;
+}
+function stageFromLines(lines) {
+  let stage = 0;
+  lines.forEach(line => { for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.startsWith(prefix)) stage = Math.max(stage, index); });
+  return stage;
+}
+function setStageProgress(index) {
+  S.processStage = Math.max(S.processStage, index);
   const chips = document.querySelectorAll('.pstage');
-  chips.forEach((c, i) => { c.classList.toggle('done', i < idx); c.classList.toggle('on', i === idx); });
-  const f = $('#pfill'); if (f) f.style.width = Math.min(100, (idx / PSTAGES.length) * 100) + '%';
+  chips.forEach((chip, i) => { chip.classList.toggle('done', i < S.processStage || S.processStage >= PSTAGES.length);
+    chip.classList.toggle('on', i === S.processStage && S.processStage < PSTAGES.length); });
+  const fill = $('#pfill'); if (fill) fill.style.width = `${Math.min(100, S.processStage / PSTAGES.length * 100)}%`;
 }
 
-// ---- RESULTS --------------------------------------------------------------
-function renderResults() {
-  const sid = S.sid;
-  const gallery = [
-    ['normal_gl.png', 'normal'], ['albedo_srgb.png', 'albedo'], ['alpha.png', 'alpha'],
-    ['height.png', 'height'], ['qa/residual_scan0.png', 'residual 0'],
-    ['qa/residual_scan3.png', 'residual 3'], ['qa/mask_agreement.png', 'agreement'],
-  ];
+// ---- Results --------------------------------------------------------------
+async function renderResults() {
   const main = $('#stage-main');
+  main.innerHTML = `<div class="result-loading"><span class="led"></span> Loading result bench...</div>`;
+  const manifest = await api.results(S.sid);
+  const imageFiles = manifest.files.filter(f => f.kind === 'png');
+  const material = imageFiles.filter(f => !f.name.startsWith('qa/'));
+  const diagnostic = imageFiles.filter(f => f.name.startsWith('qa/'));
+  const thumb = file => {
+    const [label, group] = resultLabel(file.name);
+    return `<button class="result-thumb" type="button" data-file="${escAttr(file.name)}" title="${escAttr(label)}">
+      <img src="${api.resultURL(S.sid, file.name, 220)}" alt=""><span>${esc(label)}</span><small>${bytes(file.bytes)}</small></button>`;
+  };
   main.innerHTML = `
-    <h2 class="stage-title">Results</h2>
-    <p class="stage-lead">Drag the light across the leaf to relight it in real time —
-      this is the reconstructed normal + albedo, exactly as a shader would use them.</p>
-    <div class="results">
-      <div class="relight">
-        <canvas id="rl"></canvas>
-        <div class="relight-hud">drag to move the light</div>
-        <div class="relight-ctrls">
-          <div class="ctrl">elevation <input type="range" id="rl-el" min="8" max="85" value="35"></div>
+    <div class="stage-heading result-heading"><div><div class="eyebrow">Stage 3 / Evidence bench</div><h2 class="stage-title">Results</h2>
+      <p class="stage-lead">Relight the reconstruction, then inspect every exported map and QA observation without leaving the bench.</p></div>
+      <div class="output-path" title="${escAttr(manifest.output_dir)}"><span>saved to</span><b>${esc(manifest.output_dir)}</b></div></div>
+    <div class="result-workbench">
+      <section class="result-stage">
+        <div class="result-modebar"><div class="seg" id="result-mode"><button class="on" data-mode="relight">Interactive relight</button>
+          <button data-mode="map">Map inspector</button></div><div id="map-title" class="map-title">Recovered material under movable light</div></div>
+        <div id="relight-panel" class="relight result-display"><canvas id="rl"></canvas><div class="relight-hud">drag across the specimen to move the light</div>
+          <div class="relight-ctrls"><div class="ctrl">elevation <input type="range" id="rl-el" min="8" max="85" value="35"></div>
           <div class="ctrl">ambient <input type="range" id="rl-amb" min="0" max="60" value="12"></div>
-          <div class="ctrl">convention <span class="seg" id="rl-conv">
-            <button class="on" data-v="gl">GL</button><button data-v="dx">DX</button></span></div>
-          <div class="ctrl">backdrop <span class="seg" id="rl-bg">
-            <button class="on" data-v="1">checker</button><button data-v="0">dark</button></span></div>
-        </div>
-      </div>
-      <div>
-        <div class="eyebrow" style="margin-bottom:8px">Outputs — click to open full size</div>
-        <div class="thumbs">${gallery.map(([f, l]) =>
-          `<a class="thumb" href="${api.resultURL(sid, f)}" target="_blank" rel="noopener">
-             <img src="${api.resultURL(sid, f, 240)}" alt="${l}"><div class="cap">${l}</div></a>`).join('')}
-        </div>
-      </div>
+          <div class="ctrl">normal <span class="seg" id="rl-conv"><button class="on" data-v="gl">GL</button><button data-v="dx">DX</button></span></div>
+          <div class="ctrl">backdrop <span class="seg" id="rl-bg"><button class="on" data-v="1">grid</button><button data-v="0">dark</button></span></div></div></div>
+        <div id="map-panel" class="map-panel result-display" hidden><div class="map-canvas checker" id="map-canvas"><img id="map-image" alt="Selected result map"></div>
+          <div class="map-toolbar"><div class="ctrl">zoom <input type="range" id="map-zoom" min="25" max="300" value="100"></div>
+          <div class="seg" id="map-bg"><button class="on" data-v="checker">grid</button><button data-v="dark">dark</button></div>
+          <a class="btn btn--sm" id="map-download" download>Download original</a></div></div>
+      </section>
+      <aside class="result-library"><div class="result-library-head"><div class="eyebrow">Output library</div><span>${imageFiles.length} images</span></div>
+        <details open><summary>Material maps <span>${material.length}</span></summary><div class="result-thumbs">${material.map(thumb).join('')}</div></details>
+        <details open><summary>Diagnostics <span>${diagnostic.length}</span></summary><div class="result-thumbs">${diagnostic.map(thumb).join('')}</div></details>
+        ${manifest.files.some(f => f.name === 'qa/report.txt') ? `<a class="report-link" href="${api.resultRawURL(S.sid, 'qa/report.txt')}" download>
+          <span>QA report</span><small>Download calibration and residual readout</small></a>` : ''}</aside>
     </div>`;
-  const rl = new Relight($('#rl'));
-  rl.load(api.resultURL(sid, 'normal_gl.png', 2048), api.resultURL(sid, 'albedo_srgb.png', 2048),
-          api.resultURL(sid, 'alpha.png', 2048)).catch(e => logLine('[error] relight: ' + e.message));
-  S.relight = rl;
-  $('#rl-el').addEventListener('input', e => rl.set('el', +e.target.value));
-  $('#rl-amb').addEventListener('input', e => rl.set('ambient', +e.target.value / 100));
-  segWire('#rl-conv', v => rl.set('dx', v === 'dx'));
-  segWire('#rl-bg', v => rl.set('backdrop', +v));
+  wireResults(imageFiles);
 }
-function segWire(sel, fn) {
-  const seg = $(sel);
+function resultLabel(name) {
+  if (RESULT_META[name]) return RESULT_META[name];
+  let match = name.match(/^qa\/(observed|predicted|residual)_scan(\d)\.png$/);
+  if (match) return [`${match[1][0].toUpperCase() + match[1].slice(1)} - side ${match[2]}`, 'Diagnostics'];
+  const plain = name.split('/').at(-1).replace(/\.png$/i, '').replace(/_/g, ' ');
+  return [plain.replace(/\b\w/g, c => c.toUpperCase()), name.startsWith('qa/') ? 'Diagnostics' : 'Material map'];
+}
+function wireResults(files) {
+  const relight = $('#relight-panel'), map = $('#map-panel');
+  const modeButtons = $('#result-mode').querySelectorAll('button');
+  function setMode(mode) {
+    S.resultMode = mode; relight.hidden = mode !== 'relight'; map.hidden = mode !== 'map';
+    modeButtons.forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+    if (mode === 'relight') $('#map-title').textContent = 'Recovered material under movable light';
+  }
+  modeButtons.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  const names = new Set(files.map(f => f.name));
+  if (names.has('normal_gl.png') && names.has('albedo_srgb.png') && names.has('alpha.png')) {
+    const rl = new Relight($('#rl'));
+    rl.load(api.resultURL(S.sid, 'normal_gl.png', 2048), api.resultURL(S.sid, 'albedo_srgb.png', 2048),
+      api.resultURL(S.sid, 'alpha.png', 2048)).catch(err => logLine('[error] relight: ' + err.message));
+    S.relight = rl;
+    $('#rl-el').addEventListener('input', e => rl.set('el', +e.target.value));
+    $('#rl-amb').addEventListener('input', e => rl.set('ambient', +e.target.value / 100));
+    segWire('#rl-conv', v => rl.set('dx', v === 'dx')); segWire('#rl-bg', v => rl.set('backdrop', +v));
+  }
+  document.querySelectorAll('.result-thumb').forEach(button => button.addEventListener('click', () => {
+    const file = button.dataset.file, [label, group] = resultLabel(file);
+    S.selectedResult = file; setMode('map');
+    $('#map-title').textContent = `${group} / ${label}`;
+    $('#map-image').src = api.resultURL(S.sid, file, 2400);
+    $('#map-image').style.transform = 'scale(1)'; $('#map-zoom').value = '100';
+    $('#map-download').href = api.resultRawURL(S.sid, file, true);
+    document.querySelectorAll('.result-thumb').forEach(x => x.classList.toggle('on', x === button));
+  }));
+  $('#map-zoom').addEventListener('input', e => { $('#map-image').style.transform = `scale(${+e.target.value / 100})`; });
+  segWire('#map-bg', value => { $('#map-canvas').className = `map-canvas ${value}`; });
+  if (S.selectedResult && names.has(S.selectedResult)) {
+    document.querySelector(`.result-thumb[data-file="${CSS.escape(S.selectedResult)}"]`)?.click();
+  }
+}
+function segWire(selector, fn) {
+  const seg = $(selector); if (!seg) return;
   seg.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-    seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
-    b.classList.add('on'); fn(b.dataset.v);
+    seg.querySelectorAll('button').forEach(x => x.classList.remove('on')); b.classList.add('on'); fn(b.dataset.v);
   }));
 }
 
-// ---- telemetry + log ------------------------------------------------------
+// ---- Job persistence and live logs ---------------------------------------
+function watchCurrentJob(from = 0) {
+  if (S.closeWS) S.closeWS();
+  S.jobCursor = from;
+  S.closeWS = streamJob(S.sid, lines => {
+    S.jobCursor += lines.length; lines.forEach(logLine);
+  }, async status => {
+    if (S.closeWS) S.closeWS(); S.closeWS = null;
+    S.jobStatus = status.status; S.jobKind = status.kind; S.jobResult = status.result;
+    await refreshMeta();
+    if (status.kind === 'run') {
+      if (status.status === 'done') S.processStage = PSTAGES.length;
+      if (S.stage === 'process') renderProcess();
+    } else if (status.kind?.startsWith('capture:') && S.stage === 'capture') renderCapture();
+  }, from);
+}
+function logLine(line) {
+  S.log.push(line);
+  const console = $('#log-console');
+  const cls = /\[error|fail/i.test(line) ? 'err' : /\[done|ok|saved/i.test(line) ? 'ok'
+    : /\[calib|\[solve|residual/i.test(line) ? 'warn' : '';
+  console.insertAdjacentHTML('beforeend', `<span class="${cls}">${esc(line)}</span>\n`);
+  console.scrollTop = console.scrollHeight;
+  for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.startsWith(prefix)) setStageProgress(index);
+}
+function toggleLog() {
+  const console = $('#log-console'), toggle = $('#log-toggle');
+  const open = console.hidden; console.hidden = !open; toggle.setAttribute('aria-expanded', String(open));
+}
+function openLog() { if ($('#log-console').hidden) toggleLog(); }
+function disableActions(on) { document.querySelectorAll('#stage-main .btn').forEach(b => { b.disabled = on; }); }
+
+// ---- telemetry ------------------------------------------------------------
 function paintTelemetry() {
   const m = S.meta, d = S.device, r = m?.result;
   const dots = LEAF.map(k => `<div class="dot ${m?.scans[k] ? 'done' : ''}">${k[1]}</div>`).join('');
-  let lv = '';
+  let light = '';
   if (r) {
-    const L = lightVectors(r.az0, r.el, r.thetas);
-    lv = `<div class="tel-group"><div class="tel-k">Light vectors L[k]</div>
-      <div class="lvec">${L.map((v, i) =>
-        `<span>L${i}</span><span><span class="cx">${v.x}</span> <span class="cy">${v.y}</span> <span class="cz">${v.z}</span></span>`).join('')}</div>
-      <div class="tel-row"><span class="tel-k">az0 / el</span><span class="v">${r.az0.toFixed(1)}° / ${r.el.toFixed(1)}°</span></div>
-      <div class="tel-row"><span class="tel-k">residual</span><span class="v settle">${r.residual_means.map(x => x.toFixed(3)).join(' ')}</span></div>
-    </div>`;
+    const vectors = lightVectors(r.az0, r.el, r.thetas);
+    light = `<div class="tel-group"><div class="tel-k">Light vectors L[k]</div><div class="lvec">${vectors.map((v, i) =>
+      `<span>L${i}</span><span><span class="cx">${v.x}</span> <span class="cy">${v.y}</span> <span class="cz">${v.z}</span></span>`).join('')}</div>
+      <div class="tel-row"><span class="tel-k">az0 / el</span><span class="v">${r.az0.toFixed(1)}&deg; / ${r.el.toFixed(1)}&deg;</span></div>
+      <div class="tel-row"><span class="tel-k">residual</span><span class="v settle">${r.residual_means.map(x => x.toFixed(3)).join(' ')}</span></div></div>`;
   }
-  $('#tel-body').innerHTML = `
-    <div class="tel-group"><div class="tel-k">Bench</div>
-      <div class="tel-row"><span>scanner</span><span class="v">${d?.connected ? 'online' : 'offline'}</span></div>
-      <div class="tel-row"><span>max depth</span><span class="v">${d?.max_bit_depth || '—'}-bit</span></div>
-    </div>
-    <div class="tel-group"><div class="tel-k">Session</div>
-      <div class="tel-row"><span>name</span><span class="v">${esc(m?.name || '—')}</span></div>
-      <div class="tel-row"><span>status</span><span class="v">${m?.status || '—'}</span></div>
-      <div class="tel-row"><span>scans</span><span class="dots">${dots}</span></div>
-    </div>${lv}`;
+  $('#tel-body').innerHTML = `<div class="tel-group"><div class="tel-k">Bench</div>
+    <div class="tel-row"><span>scanner</span><span class="v">${d?.connected ? 'online' : 'offline'}</span></div>
+    <div class="tel-row"><span>max depth</span><span class="v">${d?.max_bit_depth || '-'}-bit</span></div></div>
+    <div class="tel-group"><div class="tel-k">Session</div><div class="tel-row"><span>name</span><span class="v">${esc(m?.name || '-')}</span></div>
+    <div class="tel-row"><span>status</span><span class="v">${m?.status || '-'}</span></div>
+    <div class="tel-row"><span>scans</span><span class="dots">${dots}</span></div></div>${light}`;
 }
-
 function lightVectors(az0, el, thetas) {
   const er = el * Math.PI / 180, ch = Math.cos(er), sz = Math.sin(er);
-  return thetas.map(th => {
-    const a = (az0 - th) * Math.PI / 180;
-    return { x: (ch * Math.cos(a)).toFixed(2), y: (ch * Math.sin(a)).toFixed(2), z: sz.toFixed(2) };
-  });
-}
-
-function toggleLog() {
-  const c = $('#log-console'), t = $('#log-toggle');
-  const open = c.hidden; c.hidden = !open; t.setAttribute('aria-expanded', String(open));
-}
-function openLog() { const c = $('#log-console'); if (c.hidden) toggleLog(); }
-function logLine(s) {
-  S.log.push(s);
-  const c = $('#log-console');
-  const cls = /\[error|fail/i.test(s) ? 'err' : /\[done|ok|saved/i.test(s) ? 'ok'
-    : /\[calib|\[solve|residual/i.test(s) ? 'warn' : '';
-  c.insertAdjacentHTML('beforeend', `<span class="${cls}">${esc(s)}</span>\n`);
-  c.scrollTop = c.scrollHeight;
-  for (const [pre, idx] of Object.entries(STAGE_MAP)) if (s.startsWith(pre)) setStageProgress(idx);
-}
-
-// stream the current job's log to console until it reaches a terminal state
-function streamUntilDone(onDone) {
-  if (S.closeWS) S.closeWS();
-  S.closeWS = streamJob(S.sid,
-    lines => lines.forEach(logLine),
-    st => { S.closeWS && S.closeWS(); S.closeWS = null; onDone(st); });
-}
-
-function disableActions(on) {
-  document.querySelectorAll('#stage-main .btn').forEach(b => { b.disabled = on; });
+  return thetas.map(theta => { const a = (az0 - theta) * Math.PI / 180;
+    return { x: (ch * Math.cos(a)).toFixed(2), y: (ch * Math.sin(a)).toFixed(2), z: sz.toFixed(2) }; });
 }
 
 boot();
