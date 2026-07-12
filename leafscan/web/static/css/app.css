@@ -222,6 +222,8 @@ button{font-family:inherit}
 .scan-grid--optional{grid-template-columns:repeat(3,minmax(130px,1fr)); max-width:720px}
 
 .scan-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
+.recent-delete{margin-left:auto;background:transparent;border:1px solid var(--line);border-radius:4px;color:var(--dim);
+  font-family:var(--mono);font-size:9px;padding:4px 6px;cursor:pointer}.recent-delete:hover{color:#ffb0aa;border-color:#6d302a}
 @media(max-width:1100px){.scan-grid{grid-template-columns:repeat(2,1fr)}}
 .slot{border:1px dashed var(--line); border-radius:6px; aspect-ratio:1/1.15;
   display:flex; flex-direction:column; overflow:hidden; background:var(--panel);
@@ -332,6 +334,7 @@ input[type=range]{accent-color:var(--amber)}
 .save-destination label{display:block;margin:5px 0 6px;font-weight:500}
 .save-destination input{width:100%;font-family:var(--mono);background:#090806;color:var(--text);
   border:1px solid var(--line);border-radius:var(--r);padding:9px 10px}
+.save-folder-row{display:flex;gap:8px}.save-folder-row input{min-width:0}.save-folder-row .btn{white-space:nowrap}
 .save-destination small{display:block;margin-top:7px;color:var(--dim);font-family:var(--mono);font-size:9.5px}
 .result-jump{margin-top:14px}
 

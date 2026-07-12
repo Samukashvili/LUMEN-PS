@@ -92,6 +92,10 @@ async function boot() {
   $('#new-session-form').addEventListener('submit', newSession);
   $('#reset-scans-cancel').addEventListener('click', closeResetScans);
   $('#reset-scans-confirm').addEventListener('click', resetAllScans);
+  $('#delete-session-cancel').addEventListener('click', closeDeleteSession);
+  $('#delete-session-ui').addEventListener('click', () => deleteSession(false));
+  $('#delete-session-files').addEventListener('click', () => deleteSession(true));
+  $('#back-to-sessions').addEventListener('click', returnToRecent);
   document.querySelectorAll('.stage').forEach(b =>
     b.addEventListener('click', () => gotoStage(b.dataset.stage)));
   try {
@@ -125,8 +129,10 @@ async function paintRecent() {
     const li = document.createElement('li'); li.className = 'recent-item';
     const tag = m.status === 'done' ? 'tag--done' : m.status === 'ready' ? 'tag--ready' : '';
     li.innerHTML = `<span class="r-name">${esc(m.name)}</span><span class="r-meta">
-      ${m.created.slice(0, 16).replace('T', ' ')} <span class="tag ${tag}">${m.status}</span></span>`;
+      ${m.created.slice(0, 16).replace('T', ' ')} <span class="tag ${tag}">${m.status}</span></span>
+      <button class="recent-delete" type="button" data-delete="${escAttr(m.id)}" aria-label="Remove ${escAttr(m.name)}">Delete</button>`;
     li.onclick = () => enterSession(m.id); ul.appendChild(li);
+    $('.recent-delete', li).addEventListener('click', e => { e.stopPropagation(); openDeleteSession(m); });
   });
 }
 function openNewSession() {
@@ -139,6 +145,22 @@ function openResetScans() {
   $('#reset-scans-cancel').focus();
 }
 function closeResetScans() { $('#reset-scans-dialog').hidden = true; }
+function openDeleteSession(meta) {
+  S.deleteCandidate = meta;
+  $('#delete-session-description').textContent = `Remove “${meta.name}” from Recent sessions, or permanently delete its scans and outputs${meta.output_dir ? ` in ${meta.output_dir}` : ''}.`;
+  $('#delete-session-dialog').hidden = false;
+  $('#delete-session-cancel').focus();
+}
+function closeDeleteSession() { $('#delete-session-dialog').hidden = true; S.deleteCandidate = null; }
+async function deleteSession(deleteFiles) {
+  const candidate = S.deleteCandidate;
+  if (!candidate) return;
+  const buttons = $('#delete-session-dialog').querySelectorAll('button');
+  buttons.forEach(b => b.disabled = true);
+  try { await api.deleteSession(candidate.id, deleteFiles); closeDeleteSession(); await paintRecent(); }
+  catch (err) { $('#delete-session-description').textContent = `Could not remove this session: ${err.message}`; }
+  finally { buttons.forEach(b => b.disabled = false); }
+}
 async function newSession(e) {
   e.preventDefault();
   const input = $('#new-session-name'), submit = $('#new-session-form button[type="submit"]');
@@ -159,6 +181,12 @@ async function enterSession(sid) {
   $('#boot').hidden = true; $('#shell').hidden = false;
   const start = S.meta.status === 'done' ? 'results' : S.meta.ready ? 'process' : 'capture';
   gotoStage(start);
+}
+async function returnToRecent() {
+  if (S.closeWS) { S.closeWS(); S.closeWS = null; }
+  S.sid = null; S.meta = null;
+  $('#shell').hidden = true; $('#boot').hidden = false;
+  await paintRecent();
 }
 async function refreshMeta() { S.meta = await api.session(S.sid); paintTelemetry(); paintStageNav(); }
 
@@ -212,6 +240,7 @@ function renderCapture() {
       <div class="scan-grid scan-grid--optional">${['flat', 'calib0', 'calib90'].map(slot).join('')}</div></details>
     <div class="stage-foot"><div><button class="btn btn--danger btn--sm" id="reset-scans"
       ${Object.values(m.scans).some(Boolean) ? '' : 'disabled'}>Reset all scans</button>
+      <button class="btn btn--ghost btn--sm" id="cancel-job" ${S.jobKind?.startsWith('capture:') && ['queued', 'running'].includes(S.jobStatus) ? '' : 'hidden'}>Cancel scan</button>
       <span id="capture-job-note" class="mono muted"></span></div>
       <div class="foot-actions"><button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : 'All scans captured'}</button>
       <button class="btn" id="to-process" ${m.ready ? '' : 'disabled'}>Continue to Process &rarr;</button></div></div>`;
@@ -220,6 +249,7 @@ function renderCapture() {
   if (!S.backendCurrent) sb.disabled = true;
   $('#to-process').addEventListener('click', () => gotoStage('process'));
   $('#reset-scans').addEventListener('click', openResetScans);
+  $('#cancel-job')?.addEventListener('click', cancelCurrentJob);
   $('#capture-dpi').addEventListener('change', persistCaptureSettings);
   $('#smart-roi').addEventListener('click', e => {
     const b = e.currentTarget; b.setAttribute('aria-checked', String(b.getAttribute('aria-checked') !== 'true'));
@@ -312,7 +342,8 @@ function renderProcess() {
       </section>
       <section class="process-console">
         <div class="save-destination"><div class="eyebrow">Result destination</div><label for="output-dir">Save folder</label>
-          <input id="output-dir" type="text" value="${escAttr(S.meta.output_dir || '')}" placeholder="Default: this session's workspace">
+          <div class="save-folder-row"><input id="output-dir" type="text" value="${escAttr(S.meta.output_dir || '')}" placeholder="Default: this session's workspace">
+          <button class="btn btn--sm" id="choose-output-dir" type="button">Choose folder…</button></div>
           <small>Enter an absolute folder path. Leave empty to keep results with the session.</small></div>
         <div class="prog"><div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
           <div class="prog-stages" id="pstages">${PSTAGES.map(s => `<span class="pstage">${s}</span>`).join('')}</div></div>
@@ -321,10 +352,13 @@ function renderProcess() {
     </div>
     <div class="stage-foot"><button class="btn btn--ghost" id="back-cap">&larr; Capture</button>
       <div class="foot-actions"><span id="process-save-status" class="mono muted" aria-live="polite"></span>
+      <button class="btn btn--ghost" id="cancel-job" ${busy ? '' : 'hidden'}>Cancel reconstruction</button>
       <button class="btn btn--primary" id="run-btn">${busy ? 'Reconstruction running...' : done ? 'Re-run reconstruction' : 'Run reconstruction'}</button></div></div>`;
   wireConfigControls(main);
   $('#back-cap').addEventListener('click', () => gotoStage('capture'));
   $('#run-btn').addEventListener('click', doRun);
+  $('#cancel-job')?.addEventListener('click', cancelCurrentJob);
+  $('#choose-output-dir').addEventListener('click', chooseOutputDir);
   $('#apply-json').addEventListener('click', async () => {
     const status = $('#process-save-status');
     try { S.overrides = JSON.parse($('#ov-json').value || '{}'); await saveConfig(); status.textContent = 'JSON applied'; renderProcess(); }
@@ -336,7 +370,7 @@ function renderProcess() {
   restoreJobState();
 }
 function disableProcessControls(on) {
-  document.querySelectorAll('#process-settings input,#process-settings select,#process-settings button,#output-dir,#run-btn')
+  document.querySelectorAll('#process-settings input,#process-settings select,#process-settings button,#output-dir,#choose-output-dir,#run-btn')
     .forEach(el => { el.disabled = on; });
 }
 async function persistProcessSettings() {
@@ -345,6 +379,17 @@ async function persistProcessSettings() {
   await saveConfig();
   const saved = await api.setOutputDir(S.sid, $('#output-dir').value.trim() || null);
   S.meta.output_dir = saved.output_dir; status.textContent = `saving to ${saved.effective_output_dir}`;
+}
+async function chooseOutputDir() {
+  const status = $('#process-save-status'); status.textContent = 'opening folder chooser...';
+  try {
+    const choice = await api.chooseOutputDir();
+    if (!choice.path) { status.textContent = 'folder selection cancelled'; return; }
+    $('#output-dir').value = choice.path;
+    const saved = await api.setOutputDir(S.sid, choice.path);
+    S.meta.output_dir = saved.output_dir;
+    status.textContent = `saving to ${saved.effective_output_dir}`;
+  } catch (err) { status.textContent = 'could not choose folder'; logLine('[error] folder chooser: ' + err.message); }
 }
 async function doRun() {
   disableProcessControls(true); openLog();
@@ -499,6 +544,11 @@ function watchCurrentJob(from = 0) {
       if (S.stage === 'process') renderProcess();
     } else if (status.kind?.startsWith('capture:') && S.stage === 'capture') renderCapture();
   }, from);
+}
+async function cancelCurrentJob() {
+  const button = $('#cancel-job'); if (button) { button.disabled = true; button.textContent = 'Cancelling...'; }
+  try { await api.cancelJob(S.sid); logLine('[cancel] requested by user'); }
+  catch (err) { logLine('[error] could not cancel: ' + err.message); if (button) button.disabled = false; }
 }
 function logLine(line) {
   S.log.push(line);

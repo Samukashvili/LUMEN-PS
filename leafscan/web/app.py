@@ -43,6 +43,10 @@ class OutputDirReq(BaseModel):
     path: str | None = None
 
 
+class DeleteSessionReq(BaseModel):
+    delete_files: bool = False
+
+
 # ---- pages / static -------------------------------------------------------- #
 @app.get("/")
 def index():
@@ -111,6 +115,32 @@ def api_set_output_dir(sid: str, body: OutputDirReq):
             "effective_output_dir": str(S.out_dir(sid))}
 
 
+@app.post("/api/choose-output-dir")
+def api_choose_output_dir():
+    """Open the native folder chooser on this local machine."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(parent=root, title="Choose result save folder")
+        root.destroy()
+        return {"path": path or None}
+    except Exception as exc:
+        raise HTTPException(500, f"Could not open the folder chooser: {exc}") from exc
+
+
+@app.delete("/api/sessions/{sid}")
+def api_delete_session(sid: str, body: DeleteSessionReq):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Cancel or wait for the active job before deleting this session")
+    S.delete_session(sid, body.delete_files)
+    return {"status": "deleted", "delete_files": body.delete_files}
+
+
 # ---- capture / run --------------------------------------------------------- #
 @app.post("/api/sessions/{sid}/capture")
 def api_capture(sid: str, body: CaptureReq):
@@ -152,6 +182,15 @@ def api_job(sid: str):
         return {"status": "idle", "log": []}
     return {"status": job["status"], "kind": job["kind"], "log": job["log"],
             "result": job["result"], "error": job["error"]}
+
+
+@app.post("/api/sessions/{sid}/job/cancel")
+def api_cancel_job(sid: str):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if not jobs.cancel(sid):
+        raise HTTPException(409, "No active job to cancel")
+    return {"status": "cancelling"}
 
 
 # ---- images (scans + results, optional on-the-fly downscale) --------------- #
@@ -251,7 +290,7 @@ async def ws_stream(ws: WebSocket, sid: str):
                 if idx < len(lines):
                     await ws.send_json({"type": "log", "lines": lines[idx:]})
                     idx = len(lines)
-                if job["status"] in ("done", "error"):
+                if job["status"] in ("done", "error", "cancelled"):
                     await ws.send_json({"type": "status", "status": job["status"],
                                         "kind": job["kind"], "result": job["result"],
                                         "error": job["error"]})

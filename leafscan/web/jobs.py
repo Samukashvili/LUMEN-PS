@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import threading
 import traceback
+import multiprocessing as mp
+import queue
+from concurrent.futures import CancelledError
 from concurrent.futures import ThreadPoolExecutor
 
 from . import sessions as S
@@ -26,7 +29,7 @@ def get_job(sid: str) -> dict | None:
 
 def _new_job(sid: str, kind: str) -> dict:
     job = {"sid": sid, "kind": kind, "status": "queued", "log": [], "error": None,
-           "result": None}
+           "result": None, "cancel_requested": threading.Event()}
     with _lock:
         _jobs[sid] = job
     return job
@@ -41,6 +44,64 @@ def is_busy(sid: str) -> bool:
     return bool(j and j["status"] in ("queued", "running"))
 
 
+def cancel(sid: str) -> bool:
+    """Request cancellation of the active job. Worker code observes the event."""
+    with _lock:
+        job = _jobs.get(sid)
+        if not job or job["status"] not in ("queued", "running"):
+            return False
+        job["cancel_requested"].set()
+        _log(job, "[cancel] cancellation requested...")
+        return True
+
+
+def _check_cancelled(job: dict):
+    if job["cancel_requested"].is_set():
+        raise CancelledError("Cancelled by user")
+
+
+def _scan_transfer_worker(result_queue, out_path, kwargs):
+    """Own WIA's blocking COM transfer in a process that can be stopped."""
+    try:
+        _com_init()
+        from .. import capture_wia
+        result_queue.put(("ok", capture_wia.scan_to_file(out_path, **kwargs)))
+    except BaseException as exc:
+        result_queue.put(("error", f"{exc}\n{traceback.format_exc()}"))
+
+
+def _cancellable_scan(job: dict, out_path, **kwargs):
+    """Run a driver transfer separately so cancelling does not wait for WIA.
+
+    WIA's ``Item.Transfer`` is a blocking COM call and exposes no dependable
+    abort method across drivers.  Terminating its isolated helper immediately
+    releases the web worker; the partly written image is removed by the caller.
+    """
+    ctx = mp.get_context("spawn")
+    result_queue = ctx.Queue()
+    process = ctx.Process(target=_scan_transfer_worker, args=(result_queue, str(out_path), kwargs))
+    process.start()
+    try:
+        while process.is_alive():
+            process.join(0.1)
+            if job["cancel_requested"].is_set():
+                process.terminate()
+                process.join(2)
+                raise CancelledError("Cancelled by user")
+        try:
+            state, result = result_queue.get(timeout=1)
+        except queue.Empty:
+            raise RuntimeError("Scanner transfer stopped without returning a result")
+        if state != "ok":
+            raise RuntimeError(result)
+        return result
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(2)
+        result_queue.close()
+
+
 # --------------------------------------------------------------------------- #
 def start_capture(sid: str, role: str) -> dict:
     job = _new_job(sid, f"capture:{role}")
@@ -51,8 +112,7 @@ def start_capture(sid: str, role: str) -> dict:
 def _run_capture(job: dict, sid: str, role: str):
     job["status"] = "running"
     try:
-        _com_init()
-        from .. import capture_wia
+        _check_cancelled(job)
         cfg = S.session_config(sid)
         cap = cfg["capture"]
         out = S.scans_dir(sid) / f"{role}.png"
@@ -62,12 +122,15 @@ def _run_capture(job: dict, sid: str, role: str):
             preview_dpi = int(smart.get("preview_dpi", 75))
             preview = S.scans_dir(sid) / "previews" / f"{role}.png"
             _log(job, f"[scan] {role}: locator pass at {preview_dpi} dpi ...")
-            capture_wia.scan_to_file(
+            _cancellable_scan(
+                job,
                 preview, dpi=preview_dpi, color=cap["color"],
                 brightness=cap["brightness"], contrast=cap["contrast"],
                 device_name_hint=cap.get("device_name_hint", "M113"),
                 verbose=False,
             )
+            _check_cancelled(job)
+            from .. import capture_wia
             roi_mm = capture_wia.detect_content_roi_mm(
                 preview, preview_dpi,
                 padding_mm=float(smart.get("padding_mm", 10.0)),
@@ -82,13 +145,15 @@ def _run_capture(job: dict, sid: str, role: str):
 
         scope = "detected area" if roi_mm else "full bed"
         _log(job, f"[scan] {role}: detail pass at {cap['dpi']} dpi ({scope}) ...")
-        info = capture_wia.scan_to_file(
+        info = _cancellable_scan(
+            job,
             out, dpi=cap["dpi"], color=cap["color"],
             brightness=cap["brightness"], contrast=cap["contrast"],
             roi_mm=roi_mm,
             device_name_hint=cap.get("device_name_hint", "M113"),
             verbose=False,
         )
+        _check_cancelled(job)
         info["roi_mm"] = roi_mm
         _log(job, f"[scan] {role}: {info['shape']} depth={info['depth']} "
                   f"distinct={info['distinct_levels']}")
@@ -96,6 +161,10 @@ def _run_capture(job: dict, sid: str, role: str):
         job["result"] = {"role": role, "info": info}
         job["status"] = "done"
         _log(job, f"[scan] {role}: saved.")
+    except CancelledError:
+        job["status"] = "cancelled"
+        _log(job, f"[cancel] {role}: scan cancelled. Any incomplete scan was discarded.")
+        (S.scans_dir(sid) / f"{role}.png").unlink(missing_ok=True)
     except Exception as e:
         job["error"] = str(e)
         job["status"] = "error"
@@ -128,6 +197,7 @@ def _run_pipeline_job(job: dict, sid: str):
             flat_path=str(flat) if flat.exists() else None,
             calib_paths=calib, scale=cfg["runtime"]["scale"],
             verbose=True, log_fn=lambda s: _log(job, s), auto_crop=auto_crop,
+            cancel_check=lambda: _check_cancelled(job),
         )
         summary = {
             "az0": res["az0"], "el": res["el"], "thetas": res["thetas"],
@@ -138,6 +208,10 @@ def _run_pipeline_job(job: dict, sid: str):
         job["result"] = summary
         job["status"] = "done"
         _log(job, "[done] pipeline complete.")
+    except CancelledError:
+        job["status"] = "cancelled"
+        S.set_status(sid, "ready" if S.ready_to_run(sid) else "capturing")
+        _log(job, "[cancel] reconstruction cancelled. Partial output files may remain in the selected folder.")
     except Exception as e:
         job["error"] = str(e)
         job["status"] = "error"

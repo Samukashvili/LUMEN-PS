@@ -90,7 +90,8 @@ def _fill_invalid(arr, valid, region):
 
 # --------------------------------------------------------------------------- #
 def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
-                 scale=None, verbose=True, log_fn=None, auto_crop=False):
+                 scale=None, verbose=True, log_fn=None, auto_crop=False,
+                 cancel_check=None):
     """Run the full pipeline.
 
     ``log_fn`` — optional callback(str) for streaming progress (the web UI passes
@@ -111,6 +112,10 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         if verbose:
             log_fn(" ".join(str(x) for x in a))
 
+    def check_cancelled():
+        if cancel_check:
+            cancel_check()
+
     compute_backend = cfg.get("runtime", {}).get("compute", "auto")
     from .compute import backend_description
     log(f"[compute] {backend_description(compute_backend)}; tiled CUDA arrays enabled")
@@ -124,6 +129,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         from PIL import Image
         source_shapes = []
         for path in scan_paths:
+            check_cancelled()
             with Image.open(path) as image:
                 source_shapes.append((image.height, image.width))
         if len(set(source_shapes)) == 1:
@@ -136,6 +142,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     log(f"[load] {len(scan_paths)} scans, scale={scale}, srgb={is_srgb}")
     rgb, metas = [], []
     for i, sp in enumerate(scan_paths):
+        check_cancelled()
         r, meta = io.load_image_linear(sp, is_srgb, scale)
         if crop_box is not None:
             r = _apply_box(r, crop_box, scale)
@@ -147,6 +154,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         log(f"[crop] normalized variable ROI scans to common canvas {rgb[0].shape[:2]}")
     luma = []
     for i, (sp, meta) in enumerate(metas):
+        check_cancelled()
         luma.append(io.to_luminance(rgb[i], lw))
         log(f"  scan{i}: {sp.name} {native_shapes[i]} -> {rgb[i].shape} "
             f"native={meta['native_dtype']} distinct={meta['distinct_levels']} "
@@ -187,6 +195,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     thetas = [0.0]
     al_luma = [ref_luma]; al_rgb = [ref_rgb]; al_mask = [ref_mask]
     for k in range(1, len(luma)):
+        check_cancelled()
         wl, (wr, wm), th, method = align.rigid_align(
             ref_luma, luma[k], [rgb[k], masks[k]], k,
             ref_mask=ref_mask, mov_mask=masks[k], cfg=acfg)
@@ -197,6 +206,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     # ---- 5. non-rigid warp each k -> 0 (proxy flow, applied to originals) ----
     if acfg["nonrigid"]["enabled"]:
         for k in range(1, len(al_luma)):
+            check_cancelled()
             wl, (wr, wm), flow, md = align.nonrigid_warp(
                 ref_luma, ref_mask, al_luma[k], al_mask[k],
                 [al_rgb[k], al_mask[k]], acfg["nonrigid"])
@@ -217,6 +227,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     # ---- 7. calibrate lights (§7) ----
     az0, el, source = _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack,
                                  is_srgb, lw, log)
+    check_cancelled()
 
     L = light_directions(az0, el, thetas)
     log(format_light_table(L, thetas, az0, el))
@@ -228,6 +239,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
                             min_surviving=scfg["min_surviving"],
                             ridge_lambda=float(scfg["ridge_lambda"]),
                             backend=cfg.get("runtime", {}).get("compute", "auto"))
+    check_cancelled()
     normal, albedo_scalar, valid = out["normal"], out["albedo"], out["valid"]
     log(f"[solve] rejection={scfg['rejection']} -> {int(valid.sum())} solved pixels")
 
@@ -276,6 +288,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     # ---- 9. colour albedo + cleanup (§9.2) ----
     albedo_rgb = _color_albedo(rgb_stack, normal, L, out["weights"],
                                backend=compute_backend)
+    check_cancelled()
     if misreg_fill is not None and misreg_fill.any():
         from . import cleanup
         albedo_rgb = cleanup.inpaint_field(albedo_rgb, misreg_fill)
@@ -340,12 +353,14 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
             normal, core, cfg["integrate"]["highpass_sigma"],
             backend=compute_backend)
         log("[integrate] Frankot-Chellappa height computed")
+    check_cancelled()
 
     # ---- 11. outputs + QA ----
     written = outputs.write_outputs(
         out_dir, normal, albedo_rgb, out_valid, height, alpha=alpha,
         normal_bits=ocfg["normal_bits"],
         albedo_linear=ocfg["albedo_linear"], albedo_srgb=ocfg["albedo_srgb"])
+    check_cancelled()
     for p in written:
         log(f"[out] {p}")
 

@@ -77,9 +77,23 @@
   </div>
 </div>
 
+<div id="delete-session-dialog" class="modal-backdrop" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title">
+    <div class="eyebrow">Remove recent session</div>
+    <h2 id="delete-session-title">Remove this session?</h2>
+    <p id="delete-session-description">Choose whether to remove only its entry from Recent sessions or also permanently delete its scans and exported files.</p>
+    <div class="modal-actions">
+      <button id="delete-session-cancel" class="btn btn--ghost" type="button">Cancel</button>
+      <button id="delete-session-ui" class="btn" type="button">Remove from UI</button>
+      <button id="delete-session-files" class="btn btn--danger" type="button">Delete files too</button>
+    </div>
+  </div>
+</div>
+
 <!-- MAIN SHELL -->
 <div id="shell" class="shell" hidden>
   <nav class="stages" aria-label="Workflow stages">
+    <button id="back-to-sessions" class="stage stage--back" title="Return to recent sessions"><span class="stage-n">&#8592;</span><span class="stage-l">Sessions</span></button>
     <button class="stage" data-stage="capture"><span class="stage-n">1</span><span class="stage-l">Capture</span></button>
     <button class="stage" data-stage="process"><span class="stage-n">2</span><span class="stage-l">Process</span></button>
     <button class="stage" data-stage="results"><span class="stage-n">3</span><span class="stage-l">Results</span></button>

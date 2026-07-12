@@ -63,3 +63,29 @@ def test_reset_scans_returns_session_to_k0(tmp_path: Path, monkeypatch):
     assert not any(reset["scans"].values())
     assert not any(reset["capture_rois"].values())
     assert not any(sessions.scans_dir(meta["id"]).glob("k*.png"))
+
+
+def test_remove_session_from_ui_keeps_files(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Keep files")
+    scan = sessions.scans_dir(meta["id"]) / "k0.png"
+    scan.write_bytes(b"scan")
+
+    sessions.delete_session(meta["id"], delete_files=False)
+
+    assert not sessions.load_meta(meta["id"])
+    assert scan.exists()
+
+
+def test_remove_session_with_files_removes_external_output(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Delete files")
+    destination = tmp_path / "exports" / "leaf-a"
+    destination.mkdir(parents=True)
+    (destination / "normal_gl.png").write_bytes(b"result")
+    sessions.set_output_dir(meta["id"], str(destination))
+
+    sessions.delete_session(meta["id"], delete_files=True)
+
+    assert not sessions.session_dir(meta["id"]).exists()
+    assert not destination.exists()

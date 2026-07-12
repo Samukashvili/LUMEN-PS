@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -180,6 +181,31 @@ def set_output_dir(sid: str, value: str | None) -> dict:
         raise ValueError("Save folder must be an absolute path")
     meta["output_dir"] = str(expanded.resolve())
     return save_meta(meta)
+
+
+def delete_session(sid: str, delete_files: bool) -> None:
+    """Remove a session from the library, optionally deleting its saved files.
+
+    A UI-only removal deletes the catalogue entry only; scans and outputs remain
+    on disk.  A full removal also deletes the configured external output folder
+    (when one was chosen) as well as the session workspace.
+    """
+    meta = load_meta(sid)
+    if not meta:
+        raise FileNotFoundError("Session not found")
+    root = session_dir(sid)
+    configured = meta.get("output_dir")
+    if not delete_files:
+        _meta_path(sid).unlink()
+        return
+
+    if configured:
+        external = Path(configured).resolve()
+        # Never allow a malformed record to delete the session library itself.
+        library = SESSIONS_DIR.resolve()
+        if external != library and library not in external.parents:
+            shutil.rmtree(external, ignore_errors=True)
+    shutil.rmtree(root, ignore_errors=True)
 
 
 def session_config(sid: str) -> dict:
