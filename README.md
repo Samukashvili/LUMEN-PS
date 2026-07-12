@@ -22,7 +22,7 @@ Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no
 
 ## The idea in one minute
 
-A flatbed scanner already contains a stable moving light and a calibrated line sensor. They sit very close together, but crucially they are **not perfectly coaxial**. That tiny offset makes one side of a microscopic bump brighter than the other. The scanner therefore captures a real, repeatable lighting direction—not just color.
+A flatbed scanner already contains a stable moving light and a calibrated line sensor. They sit **extremely close together**, so the lighting difference is genuinely small—easy to miss when two scans are viewed at different rotations. Crucially, however, they are **not perfectly coaxial**. That finite baseline gives the incident light a slight sideways component: a microscopic slope facing the lamp returns a little more light than the same slope facing away. With locked capture settings, registration, linearization, and four observations, that subtle but repeatable signal is enough.
 
 ![Cross-section of the scanner lamp and sensor showing their useful offset](docs/assets/scanner-parallax.svg)
 
@@ -31,6 +31,16 @@ The lamp remains fixed in scanner coordinates. Rotate the subject by 90° betwee
 ![Four rotations convert the scanner's fixed lamp into four subject-relative lighting directions](docs/assets/four-directions.svg)
 
 <p align="center"><img src="docs/assets/kiwi-four-scans.webp" width="100%" alt="Four real Kiwi leaf scanner captures at 0, 90, 180, and 270 degrees"></p>
+
+## The four orientations, matched pixel-for-pixel
+
+Rotation makes the raw captures easy to compare as objects but hard to compare as lighting measurements. LUMEN-PS de-rotates every view into the first scan's coordinate frame, then performs non-rigid registration to correct the small way a leaf or flexible subject settles after handling. In the registered images below, the tip, veins, and boundary occupy the same pixels; only illumination and capture outliers should change.
+
+<p align="center"><img src="docs/assets/kiwi-aligned-lighting.webp" width="900" alt="Four registered Kiwi leaf luminance observations with fitted light azimuths"></p>
+
+Because the CIS lamp and sensor are so close, the useful difference is much smaller than the shared albedo and overall brightness. The visualization below subtracts each pixel's four-view mean and amplifies the remaining deviation **7×**. Orange means brighter than that pixel's mean; blue means darker. Opposing directional patterns across the four views are the photometric signal the solver uses—not fabricated depth or an edge filter.
+
+<p align="center"><img src="docs/assets/kiwi-lighting-difference.webp" width="900" alt="Lighting-only deviations from the four-view mean amplified seven times"></p>
 
 ## From scans to a relightable material
 
@@ -45,11 +55,11 @@ The lamp remains fixed in scanner coordinates. Rotate the subject by 90° betwee
 
 ### What comes out
 
-| Albedo (lighting removed) | OpenGL normal map | Integrated height |
+| Kiwi albedo (lighting removed) | Kiwi OpenGL normal map | Kiwi integrated height |
 |:--:|:--:|:--:|
-| ![Recovered sRGB albedo](docs/results/albedo_srgb.jpg) | ![Recovered OpenGL normal map](docs/results/normal_gl.png) | ![Integrated height field](docs/results/height.jpg) |
+| ![Recovered Kiwi sRGB albedo](docs/assets/kiwi-albedo.webp) | ![Recovered Kiwi OpenGL normal map](docs/assets/kiwi-normal.webp) | ![Integrated Kiwi height field](docs/assets/kiwi-height.webp) |
 
-LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. Full outputs are 16-bit where useful; README images are compressed previews only.
+These three previews come from the same completed `Kiwi Leaf` session used by the relighting animation. The height panel is contrast-mapped from its actual 16-bit `height.png`; it is not the obsolete flat output from an earlier integration failure. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. Full outputs remain 16-bit where useful; README images are compressed display copies only.
 
 ## Why it works
 
@@ -65,6 +75,15 @@ Two practical details make the result far better than a textbook least-squares s
 
 - **Registration is both rigid and non-rigid.** Thin subjects can settle differently after rotation; silhouette distance fields and vein/texture structure guide the correction.
 - **The solve is robust.** The brightest observation can be rejected to suppress specular glints, while pixels without at least three valid samples are excluded.
+
+### Details hidden inside the simple idea
+
+- **Four scans are deliberate.** Two intensity measurements cannot determine a three-component scaled normal. Three is the mathematical minimum; the fourth gives the solver room to reject one highlight or shadow and still remain determined.
+- **The four lights lie on one cone.** Rotation changes azimuth, not elevation. A wrong elevation can still produce plausible-looking normals with systematically exaggerated or flattened relief, so LUMEN-PS fits elevation instead of guessing it.
+- **The scanner is repeatable in ways a hand-held camera is not.** Focus, sensor path, working distance, and lamp-to-sensor geometry are mechanically fixed on every pass.
+- **Color contains an extra botanical clue.** For leaves, red light penetrates tissue more deeply than blue. LUMEN-PS writes an `R − B` subsurface hint for QA or shading experiments, but deliberately does not let it drive the normal solve. This leaf-specific bonus is optional; the core reconstruction works on other diffuse subjects.
+- **Normals and height answer different questions.** The normal map is the direct photometric result and preserves fine local slope. Height is obtained by integrating that slope field, so it is useful for relief but more sensitive to low-frequency drift and boundary conditions.
+- **Sixteen-bit normals matter here.** The lamp–sensor baseline is small, so many recovered slopes differ by fine increments that would band more readily in an 8-bit deliverable.
 
 ### The reconstruction checks its own work
 

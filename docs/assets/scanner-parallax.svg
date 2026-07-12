@@ -1,37 +1,79 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-labelledby="title desc">
-  <title id="title">Why a flatbed scanner contains directional lighting information</title>
-  <desc id="desc">A scanner cross section showing the lamp slightly offset from the sensor, so surface slopes facing the lamp return more light than slopes facing away.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">How a small lamp-to-sensor offset creates directional lighting</title>
+  <desc id="desc">A clean scanner cross-section shows an incident ray from the lamp striking a sloped surface and a reflected ray entering the CIS sensor. A separate inset compares a surface facet facing the lamp with one facing away.</desc>
   <defs>
-    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1117"/><stop offset="1" stop-color="#141c24"/></linearGradient>
-    <linearGradient id="beam" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#ffb84d" stop-opacity=".1"/><stop offset=".55" stop-color="#ffd98b" stop-opacity=".7"/><stop offset="1" stop-color="#fff4cc" stop-opacity=".05"/></linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#ffbd59"/></marker>
-    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <linearGradient id="panel" x2="0" y2="1"><stop stop-color="#101922"/><stop offset="1" stop-color="#0a1016"/></linearGradient>
+    <linearGradient id="glass" x2="1"><stop stop-color="#74b9df" stop-opacity=".18"/><stop offset=".5" stop-color="#b9e6ff" stop-opacity=".42"/><stop offset="1" stop-color="#74b9df" stop-opacity=".18"/></linearGradient>
+    <marker id="amberArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0l10 5-10 5z" fill="#ffbd59"/></marker>
+    <marker id="blueArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0l10 5-10 5z" fill="#75c7f0"/></marker>
+    <filter id="lampGlow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="10" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>
-  <rect width="1200" height="600" rx="28" fill="url(#bg)"/>
-  <text x="64" y="75" fill="#f4f7fa" font-family="system-ui,sans-serif" font-size="34" font-weight="700">The useful imperfection: lamp–sensor parallax</text>
-  <text x="64" y="113" fill="#91a0af" font-family="system-ui,sans-serif" font-size="19">Close is not the same as coaxial. A small physical offset gives the light a measurable azimuth.</text>
-  <path d="M70 286 C225 246 332 352 486 290 S750 230 910 286 S1070 322 1140 278" fill="none" stroke="#65a96b" stroke-width="20" stroke-linecap="round"/>
-  <path d="M70 301 C225 261 332 367 486 305 S750 245 910 301 S1070 337 1140 293" fill="none" stroke="#26472c" stroke-width="4" opacity=".7"/>
-  <text x="73" y="240" fill="#b8d9ba" font-family="system-ui,sans-serif" font-size="18">matte subject surface</text>
-  <rect x="54" y="340" width="1092" height="28" rx="8" fill="#8eb6d1" opacity=".3" stroke="#a9d4ef"/>
-  <text x="73" y="405" fill="#91a0af" font-family="system-ui,sans-serif" font-size="17">scanner glass</text>
-  <rect x="384" y="455" width="205" height="70" rx="16" fill="#242f3a" stroke="#ffbd59" stroke-width="2"/>
-  <circle cx="430" cy="490" r="19" fill="#ffd06e" filter="url(#glow)"/>
-  <text x="466" y="497" fill="#f8e4bc" font-family="system-ui,sans-serif" font-size="18" font-weight="650">LINE LAMP</text>
-  <rect x="665" y="455" width="205" height="70" rx="16" fill="#242f3a" stroke="#6eb7df" stroke-width="2"/>
-  <path d="M704 475h34v30h-34z" fill="#6eb7df"/><path d="M710 482h22v16h-22z" fill="#0b1117"/>
-  <text x="752" y="497" fill="#cde9f8" font-family="system-ui,sans-serif" font-size="18" font-weight="650">CIS SENSOR</text>
-  <path d="M439 465 L610 305" stroke="#ffbd59" stroke-width="5" marker-end="url(#arrow)"/>
-  <path d="M449 465 L783 316" stroke="url(#beam)" stroke-width="55"/>
-  <path d="M704 455 L704 333" stroke="#6eb7df" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
-  <path d="M514 490h126" stroke="#ffbd59" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
-  <text x="546" y="478" fill="#ffcf80" font-family="ui-monospace,monospace" font-size="17">offset</text>
-  <path d="M582 333 A65 65 0 0 1 637 314" fill="none" stroke="#ffbd59" stroke-width="2"/>
-  <text x="539" y="374" fill="#ffcf80" font-family="ui-monospace,monospace" font-size="17">light azimuth</text>
-  <g transform="translate(900 421)">
-    <rect width="240" height="114" rx="16" fill="#0d141b" stroke="#334454"/>
-    <text x="18" y="31" fill="#f4f7fa" font-family="system-ui,sans-serif" font-size="16" font-weight="700">WHAT THE SENSOR SEES</text>
-    <circle cx="34" cy="64" r="9" fill="#ffdc96"/><text x="52" y="70" fill="#b9c6d1" font-family="system-ui,sans-serif" font-size="16">slope toward lamp: bright</text>
-    <circle cx="34" cy="91" r="9" fill="#64563f"/><text x="52" y="97" fill="#b9c6d1" font-family="system-ui,sans-serif" font-size="16">slope away: dark</text>
+
+  <rect width="1280" height="720" rx="28" fill="#080d12"/>
+  <text x="54" y="62" fill="#f2f6f9" font-family="system-ui,sans-serif" font-size="32" font-weight="750">A tiny baseline is enough</text>
+  <text x="54" y="96" fill="#96a6b5" font-family="system-ui,sans-serif" font-size="18">The lamp and sensor are close, so the lighting change is subtle—but they are not at the same point.</text>
+
+  <!-- Main cross-section -->
+  <rect x="42" y="130" width="790" height="530" rx="20" fill="url(#panel)" stroke="#263746"/>
+  <text x="68" y="171" fill="#dce5eb" font-family="system-ui,sans-serif" font-size="17" font-weight="700" letter-spacing="1.4">SCANNER CROSS-SECTION</text>
+  <text x="805" y="171" fill="#718291" font-family="system-ui,sans-serif" font-size="14" text-anchor="end">geometry enlarged for clarity · not to scale</text>
+
+  <!-- Subject and glass -->
+  <path d="M86 302 C205 286 276 331 388 296 C500 260 585 328 690 289 C737 272 776 274 796 277" fill="none" stroke="#79b77c" stroke-width="18" stroke-linecap="round"/>
+  <path d="M86 312 C205 296 276 341 388 306 C500 270 585 338 690 299 C737 282 776 284 796 287" fill="none" stroke="#315d36" stroke-width="3" opacity=".9"/>
+  <text x="88" y="254" fill="#b8d9ba" font-family="system-ui,sans-serif" font-size="16">shallow matte surface</text>
+  <rect x="72" y="354" width="730" height="23" rx="7" fill="url(#glass)" stroke="#6faac9" stroke-opacity=".65"/>
+  <text x="88" y="407" fill="#83a0b2" font-family="system-ui,sans-serif" font-size="15">scanner glass</text>
+
+  <!-- Lamp and sensor blocks -->
+  <rect x="245" y="510" width="190" height="85" rx="14" fill="#17222c" stroke="#d99132"/>
+  <circle cx="285" cy="552" r="17" fill="#ffd36f" filter="url(#lampGlow)"/>
+  <text x="318" y="547" fill="#ffdda0" font-family="system-ui,sans-serif" font-size="16" font-weight="700">LINE LAMP</text>
+  <text x="318" y="570" fill="#8e9ba6" font-family="system-ui,sans-serif" font-size="13">illumination source</text>
+  <rect x="521" y="510" width="218" height="85" rx="14" fill="#17222c" stroke="#5aaed5"/>
+  <path d="M552 533h31v35h-31z" fill="#75c7f0"/><path d="M558 540h19v21h-19z" fill="#081017"/>
+  <text x="600" y="547" fill="#bfe8fa" font-family="system-ui,sans-serif" font-size="16" font-weight="700">CIS SENSOR</text>
+  <text x="600" y="570" fill="#8e9ba6" font-family="system-ui,sans-serif" font-size="13">records returned light</text>
+
+  <!-- Physically meaningful ray path -->
+  <path d="M285 528 L473 301" fill="none" stroke="#ffbd59" stroke-width="4" marker-end="url(#amberArrow)"/>
+  <path d="M479 306 L566 510" fill="none" stroke="#75c7f0" stroke-width="4" marker-end="url(#blueArrow)"/>
+  <circle cx="476" cy="302" r="8" fill="#fff0c2"/>
+  <text x="321" y="386" fill="#ffca73" font-family="system-ui,sans-serif" font-size="15" transform="rotate(-50 321 386)">incident light</text>
+  <text x="535" y="372" fill="#9ddcf8" font-family="system-ui,sans-serif" font-size="15" transform="rotate(67 535 372)">return to sensor</text>
+
+  <!-- Baseline and angle -->
+  <path d="M286 630 H566" fill="none" stroke="#ffbd59" stroke-width="2" marker-start="url(#amberArrow)" marker-end="url(#amberArrow)"/>
+  <text x="426" y="652" fill="#ffc96f" font-family="ui-monospace,monospace" font-size="15" text-anchor="middle">small lamp–sensor baseline b</text>
+  <path d="M476 302 L476 503" fill="none" stroke="#586875" stroke-width="1.5" stroke-dasharray="6 7"/>
+  <path d="M462 321 A35 35 0 0 1 481 337" fill="none" stroke="#ffbd59" stroke-width="2"/>
+  <text x="420" y="351" fill="#ffc96f" font-family="ui-monospace,monospace" font-size="14">small angle θ</text>
+
+  <!-- Explanation inset -->
+  <rect x="858" y="130" width="380" height="530" rx="20" fill="url(#panel)" stroke="#263746"/>
+  <text x="884" y="171" fill="#dce5eb" font-family="system-ui,sans-serif" font-size="17" font-weight="700" letter-spacing="1.4">WHAT THAT SMALL ANGLE ENCODES</text>
+  <text x="884" y="205" fill="#93a3b1" font-family="system-ui,sans-serif" font-size="15">Same material. Same lamp. Different slope.</text>
+
+  <g transform="translate(884 242)">
+    <rect width="328" height="158" rx="14" fill="#0b1218" stroke="#293b49"/>
+    <path d="M34 112 L176 53" stroke="#78b77c" stroke-width="16" stroke-linecap="round"/>
+    <path d="M40 128 L108 42" stroke="#ffbd59" stroke-width="4" marker-end="url(#amberArrow)"/>
+    <path d="M104 72 L130 92" stroke="#e7f0f5" stroke-width="3" marker-end="url(#blueArrow)"/>
+    <circle cx="61" cy="132" r="11" fill="#ffd36f"/>
+    <text x="196" y="65" fill="#e9f3ea" font-family="system-ui,sans-serif" font-size="17" font-weight="700">faces lamp</text>
+    <text x="196" y="91" fill="#ffcf7d" font-family="system-ui,sans-serif" font-size="15">slightly brighter</text>
+    <text x="196" y="119" fill="#7e919f" font-family="ui-monospace,monospace" font-size="14">larger N · L</text>
   </g>
+  <g transform="translate(884 420)">
+    <rect width="328" height="158" rx="14" fill="#0b1218" stroke="#293b49"/>
+    <path d="M34 53 L176 112" stroke="#4d7951" stroke-width="16" stroke-linecap="round"/>
+    <path d="M40 128 L108 75" stroke="#ffbd59" stroke-width="4" marker-end="url(#amberArrow)"/>
+    <path d="M108 76 L139 54" stroke="#70828e" stroke-width="3" marker-end="url(#blueArrow)"/>
+    <circle cx="61" cy="132" r="11" fill="#ffd36f"/>
+    <text x="196" y="65" fill="#dbe4da" font-family="system-ui,sans-serif" font-size="17" font-weight="700">faces away</text>
+    <text x="196" y="91" fill="#a9b4bc" font-family="system-ui,sans-serif" font-size="15">slightly darker</text>
+    <text x="196" y="119" fill="#7e919f" font-family="ui-monospace,monospace" font-size="14">smaller N · L</text>
+  </g>
+  <rect x="884" y="604" width="328" height="32" rx="8" fill="#332817"/>
+  <text x="1048" y="625" fill="#ffd28a" font-family="system-ui,sans-serif" font-size="14" text-anchor="middle">Four rotations make the subtle change solvable.</text>
 </svg>
