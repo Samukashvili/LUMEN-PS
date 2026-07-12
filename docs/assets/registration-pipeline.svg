@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 410" role="img" aria-labelledby="title desc">
+  <title id="title">Registration pipeline: segment, de-rotate, proxy flow, remap once</title>
+  <desc id="desc">Four panels show leaf segmentation, rigid de-rotation about the centroid, dense flow estimated on a lighting-invariant proxy, and a single remap of the original scan with a validity check.</desc>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#111923"/><stop offset="1" stop-color="#0a1018"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#ffb454"/></marker>
+    <marker id="tipA" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#ffb454"/></marker>
+    <marker id="tipB" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#85d7ff"/></marker>
+    <path id="leafp" d="M0 0C22 -34 74 -36 98 0C74 36 22 34 0 0Z"/>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="410" rx="24" fill="url(#bg)"/>
+  <g font-family="system-ui,Segoe UI,sans-serif">
+    <text x="42" y="46" fill="#eef4f8" font-size="23" font-weight="700">MORPHING FOUR ROTATIONS ONTO ONE PIXEL GRID</text>
+    <text x="42" y="72" fill="#87a0b3" font-size="15">Rigid first, elastic second — and the flow is never allowed to look at the raw, differently-lit pixels.</text>
+
+    <!-- 01 SEGMENT -->
+    <g transform="translate(38 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">01 · SEGMENT</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Find the subject</text>
+      <g transform="translate(22 82)">
+        <rect width="94" height="70" rx="8" fill="#33475a"/>
+        <use href="#leafp" transform="translate(18 35) scale(.58)" fill="#35594a" stroke="#65a96b" stroke-width="2.5"/>
+        <path d="M102 35h20" stroke="#ffb454" stroke-width="2.5" marker-end="url(#tipA)"/>
+        <rect x="128" width="94" height="70" rx="8" fill="#0d141c" stroke="#2c4050"/>
+        <use href="#leafp" transform="translate(146 35) scale(.58)" fill="#dfe7ec"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">• Otsu on linear luminance</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">• morphology, largest component</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">The silhouette is the anchor.</text>
+    </g>
+
+    <path d="M296 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- 02 DE-ROTATE -->
+    <g transform="translate(334 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">02 · DE-ROTATE</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Undo the −90°·k turn</text>
+      <g transform="translate(0 70)">
+        <use href="#leafp" transform="translate(186 60) rotate(90) scale(.8) translate(-49 0)" fill="none" stroke="#707cff" stroke-width="2.5" stroke-dasharray="6 5" opacity=".8"/>
+        <use href="#leafp" transform="translate(28 60)" fill="#35594a" stroke="#65a96b" stroke-width="2.5"/>
+        <path d="M180 16Q145 -6 96 12" fill="none" stroke="#ffb454" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#tipA)"/>
+        <g stroke="#85d7ff" stroke-width="2"><path d="M69 60h16"/><path d="M77 52v16"/></g>
+        <circle cx="77" cy="60" r="3.5" fill="#85d7ff" filter="url(#glow)"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">• fiducial markers when present</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">• else rotate about the centroid</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">ECC refine on distance fields.</text>
+    </g>
+
+    <path d="M592 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- 03 PROXY FLOW -->
+    <g transform="translate(630 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">03 · PROXY FLOW</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Match geometry only</text>
+      <g transform="translate(0 70)">
+        <g fill="none" stroke="#85d7ff">
+          <use href="#leafp" transform="translate(38 58) scale(1.12)" stroke-width="2.5"/>
+          <use href="#leafp" transform="translate(52 58) scale(.82)" opacity=".55" stroke-width="2"/>
+          <use href="#leafp" transform="translate(66 58) scale(.52)" opacity=".3" stroke-width="2"/>
+        </g>
+        <g stroke="#ffbd68" stroke-width="1.7" opacity=".85" fill="none">
+          <path d="M44 58h100"/><path d="M74 58l22-16"/><path d="M74 58l22 16"/>
+          <path d="M102 58l18-12"/><path d="M102 58l18 12"/>
+        </g>
+        <g stroke="#ffb454" stroke-width="2.4" fill="none">
+          <path d="M170 30l20 7" marker-end="url(#tipA)"/>
+          <path d="M178 58h22" marker-end="url(#tipA)"/>
+          <path d="M170 86l20-7" marker-end="url(#tipA)"/>
+        </g>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">• mask distance field + vein detail</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">• dense DIS flow at ¼ resolution</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">Blind to shading by construction.</text>
+    </g>
+
+    <path d="M888 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <!-- 04 REMAP ONCE -->
+    <g transform="translate(926 98)">
+      <rect width="236" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">04 · REMAP ONCE</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Warp the raw scan</text>
+      <g transform="translate(22 74)">
+        <g fill="none" stroke="#3e596c" stroke-width="1.4">
+          <path d="M0 6C48 0 144 12 192 4"/>
+          <path d="M0 32C48 26 144 38 192 30"/>
+          <path d="M0 58C48 52 144 64 192 56"/>
+          <path d="M0 84C48 80 144 90 192 82"/>
+          <path d="M10 0C4 30 14 60 8 88"/>
+          <path d="M56 0C50 30 62 60 54 88"/>
+          <path d="M102 0C96 30 110 60 100 88"/>
+          <path d="M148 0C142 30 156 60 146 88"/>
+          <path d="M186 0C182 30 190 60 184 88"/>
+        </g>
+        <use href="#leafp" transform="translate(52 48) scale(.85)" fill="#35594a" stroke="#65a96b" stroke-width="2.5"/>
+        <path d="M94 48l3-36" stroke="#85d7ff" stroke-width="3" marker-end="url(#tipB)"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">• flow smoothed, clamped ≤ 60 px</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">• one interpolation of the original</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">Keep pixels seen in ≥ 3 views.</text>
+    </g>
+  </g>
+</svg>

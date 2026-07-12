@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">Why optical flow runs on lighting-invariant proxies, not raw scans</title>
+  <desc id="desc">Left panel: flow on raw differently-lit scans chases the lamp and erases the photometric signal. Right panel: flow on silhouette distance fields plus vein detail measures only real settling. Bottom strip: flow is estimated at quarter scale and upscaled with its vectors.</desc>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#111923"/><stop offset="1" stop-color="#0a1018"/></linearGradient>
+    <linearGradient id="litL" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#8ecf9f"/><stop offset="1" stop-color="#22412f"/></linearGradient>
+    <linearGradient id="litT" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#8ecf9f"/><stop offset="1" stop-color="#22412f"/></linearGradient>
+    <marker id="tipR" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#ff625f"/></marker>
+    <marker id="tipC" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0 8 4 0 8Z" fill="#85d7ff"/></marker>
+    <marker id="tipA2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0 9 4.5 0 9Z" fill="#ffb454"/></marker>
+    <path id="leafq" d="M0 0C22 -34 74 -36 98 0C74 36 22 34 0 0Z"/>
+    <g id="proxyleaf" fill="none">
+      <use href="#leafq" stroke="#85d7ff" stroke-width="2.5" transform="scale(1.06)"/>
+      <use href="#leafq" stroke="#85d7ff" stroke-width="2" opacity=".5" transform="translate(13 0) scale(.78)"/>
+      <use href="#leafq" stroke="#85d7ff" stroke-width="2" opacity=".28" transform="translate(26 0) scale(.5)"/>
+      <g stroke="#ffbd68" stroke-width="1.7" opacity=".85">
+        <path d="M6 0h92"/><path d="M32 0l22-16"/><path d="M32 0l22 16"/><path d="M58 0l18-13"/><path d="M58 0l18 13"/>
+      </g>
+    </g>
+  </defs>
+  <rect width="1200" height="560" rx="24" fill="url(#bg)"/>
+  <g font-family="system-ui,Segoe UI,sans-serif">
+    <text x="42" y="46" fill="#eef4f8" font-size="23" font-weight="700">THE FLOW NEVER SEES THE RAW PIXELS</text>
+    <text x="42" y="72" fill="#87a0b3" font-size="15">Optical flow matches brightness — but between rotations, the brightness differences ARE the measurement.</text>
+
+    <!-- LEFT: raw scans, forbidden -->
+    <g transform="translate(38 98)">
+      <rect width="546" height="268" rx="16" fill="#1a151a" stroke="#4a2c33"/>
+      <g transform="translate(24 14)">
+        <circle cx="11" cy="22" r="11" fill="none" stroke="#ff625f" stroke-width="2.5"/>
+        <path d="M6 17l10 10M16 17L6 27" stroke="#ff625f" stroke-width="2.5"/>
+        <text x="34" y="28" fill="#ff625f" font-size="15" font-weight="700">FLOW ON RAW SCANS — never</text>
+      </g>
+      <g transform="translate(60 150)">
+        <use href="#leafq" fill="url(#litL)"/>
+        <text x="49" y="62" fill="#87a0b3" font-size="12" text-anchor="middle">scan 0 · lamp from the left</text>
+      </g>
+      <g transform="translate(330 150)">
+        <use href="#leafq" fill="url(#litT)" transform="rotate(0)"/>
+        <text x="49" y="62" fill="#87a0b3" font-size="12" text-anchor="middle">scan 1 · lamp from above</text>
+      </g>
+      <g stroke="#ff625f" stroke-width="2.2" fill="none" opacity=".9">
+        <path d="M178 128C226 96 268 168 306 132" marker-end="url(#tipR)"/>
+        <path d="M172 152C230 190 262 118 312 156" marker-end="url(#tipR)"/>
+        <path d="M182 172C222 140 276 196 316 168" marker-end="url(#tipR)"/>
+      </g>
+      <text x="24" y="228" fill="#c9a3aa" font-size="13">The solver bends texture until the shading matches —</text>
+      <text x="24" y="248" fill="#c9a3aa" font-size="13">quietly warping away the exact signal photometric stereo needs.</text>
+    </g>
+
+    <!-- RIGHT: proxies -->
+    <g transform="translate(616 98)">
+      <rect width="546" height="268" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <g transform="translate(24 14)">
+        <circle cx="11" cy="22" r="11" fill="none" stroke="#65a96b" stroke-width="2.5"/>
+        <path d="M5 22l4.5 5L17 17" fill="none" stroke="#65a96b" stroke-width="2.5"/>
+        <text x="34" y="28" fill="#85d7ff" font-size="15" font-weight="700">FLOW ON LIGHTING-INVARIANT PROXIES</text>
+      </g>
+      <g transform="translate(60 150)">
+        <use href="#proxyleaf"/>
+        <text x="49" y="62" fill="#87a0b3" font-size="12" text-anchor="middle">proxy of scan 0</text>
+      </g>
+      <g transform="translate(330 150)">
+        <use href="#proxyleaf"/>
+        <text x="49" y="62" fill="#87a0b3" font-size="12" text-anchor="middle">proxy of scan 1</text>
+      </g>
+      <g stroke="#85d7ff" stroke-width="2.2" fill="none">
+        <path d="M182 138h116" marker-end="url(#tipC)"/>
+        <path d="M182 152h116" marker-end="url(#tipC)"/>
+        <path d="M182 166h116" marker-end="url(#tipC)"/>
+      </g>
+      <text x="24" y="228" fill="#9db0bf" font-size="13">Silhouette distance field + vein high-pass look identical under any lamp.</text>
+      <text x="24" y="248" fill="#9db0bf" font-size="13">The recovered flow can only describe how the subject actually settled.</text>
+    </g>
+
+    <!-- BOTTOM STRIP: quarter-scale trick -->
+    <g transform="translate(38 394)">
+      <rect width="1124" height="130" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="24" y="34" fill="#ffbd68" font-size="14" font-weight="700">THE SCALE TRICK</text>
+      <text x="24" y="56" fill="#9db0bf" font-size="13">A thin leaf can settle by hundreds of pixels at 600 dpi — beyond any dense matcher&#8217;s search range at full resolution.</text>
+
+      <g transform="translate(202 74)" font-size="13" text-anchor="middle">
+        <rect width="104" height="42" rx="9" fill="#1b2c39" stroke="#3e596c"/>
+        <text x="52" y="26" fill="#d8e2e9">full-res proxy</text>
+        <path d="M112 21h34" stroke="#ffb454" stroke-width="2.5" marker-end="url(#tipA2)"/>
+        <rect x="154" y="10" width="46" height="22" rx="6" fill="#1b2c39" stroke="#3e596c"/>
+        <text x="177" y="26" fill="#d8e2e9">¼×</text>
+        <path d="M208 21h34" stroke="#ffb454" stroke-width="2.5" marker-end="url(#tipA2)"/>
+        <rect x="250" width="90" height="42" rx="9" fill="#233a2c" stroke="#65a96b"/>
+        <text x="295" y="26" fill="#d8e2e9">DIS flow</text>
+        <path d="M348 21h34" stroke="#ffb454" stroke-width="2.5" marker-end="url(#tipA2)"/>
+        <rect x="390" width="150" height="42" rx="9" fill="#1b2c39" stroke="#3e596c"/>
+        <text x="465" y="26" fill="#d8e2e9">upscale ×4, vectors too</text>
+        <path d="M548 21h34" stroke="#ffb454" stroke-width="2.5" marker-end="url(#tipA2)"/>
+        <rect x="590" width="130" height="42" rx="9" fill="#3a2f1c" stroke="#ffb454"/>
+        <text x="655" y="26" fill="#ffd9a0">remap original</text>
+      </g>
+    </g>
+  </g>
+</svg>

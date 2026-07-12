@@ -44,6 +44,23 @@ Because the CIS lamp and sensor are so close, the useful difference is much smal
 
 <p align="center"><img src="docs/assets/kiwi-lighting-difference.webp" width="900" alt="Lighting-only deviations from the four-view mean amplified seven times"></p>
 
+## Morphing the scans into alignment
+
+The reconstruction is only as good as its registration. Every output pixel must observe the same physical point in all four scans; any residual misalignment is interpreted by the solver as surface slope and becomes fake relief. Placing the four rotations onto one pixel grid is therefore its own small pipeline: rigid first, elastic second, with a per-pixel validity check at the end.
+
+![Registration pipeline: segment the subject, de-rotate rigidly, estimate flow on a lighting-invariant proxy, remap the raw scan once](docs/assets/registration-pipeline.svg)
+
+1. **Segment.** Otsu thresholding on linear luminance separates the darker subject from the bright platen background, followed by morphological cleanup and a largest-component pass. The resulting silhouette anchors everything that follows.
+2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the nominal −90°·k about the subject's centroid, and the result is refined with ECC image alignment — run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting.
+3. **Proxy flow.** A rigid transform is not enough for a leaf, a pressed flower, or fabric: handling it between rotations lets it settle slightly differently each time. Dense DIS optical flow measures that elastic deformation — but on a purpose-built proxy image, never on the raw pixels.
+4. **Remap once.** The flow field is smoothed, clamped to a sane maximum displacement (60 px by default), and applied to the full-detail original in a single interpolation, so no detail is lost to repeated resampling. Pixels that end up covered by fewer than three warped views are excluded from the solve as underdetermined.
+
+The subtle part is what the elastic step is *not allowed to see*. Optical flow works by moving pixels until brightness matches — but between rotations, the brightness differences **are the measurement**. Run flow on the raw scans and it will happily bend the leaf until the shading agrees, silently erasing the directional signal photometric stereo depends on. So the flow is computed on a lighting-invariant proxy instead: the silhouette's distance transform provides the large-scale shape, and a high-pass of the luminance contributes vein- and texture-scale detail. Both look identical no matter where the lamp sits, so the recovered flow can only describe how the subject physically settled.
+
+![Flow on raw differently-lit scans chases the lamp and destroys the signal; flow on lighting-invariant proxies measures only real settling, estimated at quarter scale and upscaled](docs/assets/lighting-invariant-proxy.svg)
+
+One practical trick makes this tractable at scanner resolutions: a thin subject can settle by hundreds of pixels at 600 dpi, far beyond a dense matcher's search range. The flow is therefore estimated on a quarter-scale copy of the proxy, where the same motion spans only dozens of pixels, then upscaled — vector magnitudes scaled with it — before the one full-resolution remap. The tunables live under `align` in [`leafscan/config.yaml`](leafscan/config.yaml), and the implementation is [`leafscan/align.py`](leafscan/align.py).
+
 ## From scans to a relightable material
 
 | Stage | What happens | Why it matters |
