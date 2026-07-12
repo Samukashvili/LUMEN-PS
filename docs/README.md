@@ -1,5 +1,12 @@
 # Reference material — worked example
 
+LUMEN-PS is a general shallow-surface scanner for mostly diffuse subjects. This
+folder uses a leaf because foliage motivated the project and makes fine relief
+easy to judge; the reconstruction is not limited to leaves. Paper, fabric,
+cardboard, bark, and other flat matte materials are also candidates. Avoid very
+shiny subjects, and use caution with rigid objects: raised, heavy, or sharp
+items can scratch or crack the scanner glass or damage its lid/mechanism.
+
 A complete real run of the pipeline on a single grape leaf, captured on the
 HP LaserJet M1130/M1132 flatbed at 600 dpi. These are **compressed, downscaled
 images for documentation only** — photos/diagnostics are JPEG, normal maps and
@@ -16,7 +23,7 @@ real run needs lossless PNG/TIFF captures — the CLI ignores JPEGs on purpose.)
 Final deliverables (downscaled to ≤2048 px):
 - `normal_gl.png` / `normal_dx.png` — tangent-space normal maps
 - `albedo.jpg` (linear — looks dark) / `albedo_srgb.jpg` — lighting-free base colour
-- `alpha.png` — leaf silhouette / opacity
+- `alpha.png` — subject silhouette / opacity
 - `albedo_srgb_rgba.png`, `normal_gl_rgba.png` — RGBA copies for a transparent plane
 - `height.jpg` — Frankot–Chellappa integrated relief
 

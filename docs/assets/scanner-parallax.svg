@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-labelledby="title desc">
+  <title id="title">Why a flatbed scanner contains directional lighting information</title>
+  <desc id="desc">A scanner cross section showing the lamp slightly offset from the sensor, so surface slopes facing the lamp return more light than slopes facing away.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1117"/><stop offset="1" stop-color="#141c24"/></linearGradient>
+    <linearGradient id="beam" x1="0" y1="1" x2="1" y2="0"><stop stop-color="#ffb84d" stop-opacity=".1"/><stop offset=".55" stop-color="#ffd98b" stop-opacity=".7"/><stop offset="1" stop-color="#fff4cc" stop-opacity=".05"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0l10 5-10 5z" fill="#ffbd59"/></marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="600" rx="28" fill="url(#bg)"/>
+  <text x="64" y="75" fill="#f4f7fa" font-family="system-ui,sans-serif" font-size="34" font-weight="700">The useful imperfection: lamp–sensor parallax</text>
+  <text x="64" y="113" fill="#91a0af" font-family="system-ui,sans-serif" font-size="19">Close is not the same as coaxial. A small physical offset gives the light a measurable azimuth.</text>
+  <path d="M70 286 C225 246 332 352 486 290 S750 230 910 286 S1070 322 1140 278" fill="none" stroke="#65a96b" stroke-width="20" stroke-linecap="round"/>
+  <path d="M70 301 C225 261 332 367 486 305 S750 245 910 301 S1070 337 1140 293" fill="none" stroke="#26472c" stroke-width="4" opacity=".7"/>
+  <text x="73" y="240" fill="#b8d9ba" font-family="system-ui,sans-serif" font-size="18">matte subject surface</text>
+  <rect x="54" y="340" width="1092" height="28" rx="8" fill="#8eb6d1" opacity=".3" stroke="#a9d4ef"/>
+  <text x="73" y="405" fill="#91a0af" font-family="system-ui,sans-serif" font-size="17">scanner glass</text>
+  <rect x="384" y="455" width="205" height="70" rx="16" fill="#242f3a" stroke="#ffbd59" stroke-width="2"/>
+  <circle cx="430" cy="490" r="19" fill="#ffd06e" filter="url(#glow)"/>
+  <text x="466" y="497" fill="#f8e4bc" font-family="system-ui,sans-serif" font-size="18" font-weight="650">LINE LAMP</text>
+  <rect x="665" y="455" width="205" height="70" rx="16" fill="#242f3a" stroke="#6eb7df" stroke-width="2"/>
+  <path d="M704 475h34v30h-34z" fill="#6eb7df"/><path d="M710 482h22v16h-22z" fill="#0b1117"/>
+  <text x="752" y="497" fill="#cde9f8" font-family="system-ui,sans-serif" font-size="18" font-weight="650">CIS SENSOR</text>
+  <path d="M439 465 L610 305" stroke="#ffbd59" stroke-width="5" marker-end="url(#arrow)"/>
+  <path d="M449 465 L783 316" stroke="url(#beam)" stroke-width="55"/>
+  <path d="M704 455 L704 333" stroke="#6eb7df" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <path d="M514 490h126" stroke="#ffbd59" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="546" y="478" fill="#ffcf80" font-family="ui-monospace,monospace" font-size="17">offset</text>
+  <path d="M582 333 A65 65 0 0 1 637 314" fill="none" stroke="#ffbd59" stroke-width="2"/>
+  <text x="539" y="374" fill="#ffcf80" font-family="ui-monospace,monospace" font-size="17">light azimuth</text>
+  <g transform="translate(900 421)">
+    <rect width="240" height="114" rx="16" fill="#0d141b" stroke="#334454"/>
+    <text x="18" y="31" fill="#f4f7fa" font-family="system-ui,sans-serif" font-size="16" font-weight="700">WHAT THE SENSOR SEES</text>
+    <circle cx="34" cy="64" r="9" fill="#ffdc96"/><text x="52" y="70" fill="#b9c6d1" font-family="system-ui,sans-serif" font-size="16">slope toward lamp: bright</text>
+    <circle cx="34" cy="91" r="9" fill="#64563f"/><text x="52" y="97" fill="#b9c6d1" font-family="system-ui,sans-serif" font-size="16">slope away: dark</text>
+  </g>
+</svg>

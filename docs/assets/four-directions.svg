@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 330" role="img" aria-labelledby="t d">
+ <title id="t">Four rotations create four lighting directions</title><desc id="d">The subject rotates by ninety degrees between scans while the scanner lamp stays fixed, producing four light directions in subject coordinates.</desc>
+ <defs><linearGradient id="b"><stop stop-color="#0b1117"/><stop offset="1" stop-color="#151d25"/></linearGradient><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0l10 5-10 5z" fill="#ffbd59"/></marker></defs>
+ <rect width="1200" height="330" rx="24" fill="url(#b)"/>
+ <text x="44" y="52" fill="#f4f7fa" font-family="system-ui" font-size="27" font-weight="700">One fixed lamp. Four subject-relative lights.</text>
+ <g font-family="system-ui" text-anchor="middle">
+  <g transform="translate(150 178)"><circle r="77" fill="#111a22" stroke="#344657"/><path d="M-52 8Q0-66 52 8Q15 72-52 8" fill="#366a3e"/><path d="M0-50v100" stroke="#82b987" stroke-width="3"/><path d="M-95 0H-35" stroke="#ffbd59" stroke-width="5" marker-end="url(#a)"/><text y="116" fill="#c8d2db" font-size="18">SCAN 0 · 0°</text></g>
+  <g transform="translate(450 178)"><circle r="77" fill="#111a22" stroke="#344657"/><g transform="rotate(90)"><path d="M-52 8Q0-66 52 8Q15 72-52 8" fill="#366a3e"/><path d="M0-50v100" stroke="#82b987" stroke-width="3"/></g><path d="M-95 0H-35" stroke="#ffbd59" stroke-width="5" marker-end="url(#a)"/><text y="116" fill="#c8d2db" font-size="18">SCAN 1 · 90°</text></g>
+  <g transform="translate(750 178)"><circle r="77" fill="#111a22" stroke="#344657"/><g transform="rotate(180)"><path d="M-52 8Q0-66 52 8Q15 72-52 8" fill="#366a3e"/><path d="M0-50v100" stroke="#82b987" stroke-width="3"/></g><path d="M-95 0H-35" stroke="#ffbd59" stroke-width="5" marker-end="url(#a)"/><text y="116" fill="#c8d2db" font-size="18">SCAN 2 · 180°</text></g>
+  <g transform="translate(1050 178)"><circle r="77" fill="#111a22" stroke="#344657"/><g transform="rotate(270)"><path d="M-52 8Q0-66 52 8Q15 72-52 8" fill="#366a3e"/><path d="M0-50v100" stroke="#82b987" stroke-width="3"/></g><path d="M-95 0H-35" stroke="#ffbd59" stroke-width="5" marker-end="url(#a)"/><text y="116" fill="#c8d2db" font-size="18">SCAN 3 · 270°</text></g>
+ </g>
+</svg>
