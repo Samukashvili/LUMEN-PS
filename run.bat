@@ -11,6 +11,7 @@ set "VENV=%ROOT%.venv"
 set "VENV_PY=%VENV%\Scripts\python.exe"
 set "RUNTIME=%ROOT%.lumen-ps"
 set "LUMEN_ICON=%RUNTIME%\lumen-ps.ico"
+set "CUPY_CACHE_DIR=%RUNTIME%\cupy-cache"
 
 title LUMEN-PS - Photometric Stereo Bench
 echo.
@@ -42,6 +43,17 @@ if not exist "%VENV_PY%" (
 echo [setup] Checking required Python packages...
 "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto :setup_failed
+
+rem Install the CUDA backend automatically on NVIDIA systems. Failure is not
+rem fatal: the processing pipeline retains its optimized CPU fallback.
+where nvidia-smi >nul 2>nul
+if not errorlevel 1 (
+  "%VENV_PY%" -c "import cupy; x=cupy.arange(1); raise SystemExit(cupy.cuda.runtime.getDeviceCount() < 1 or int(x.sum()) != 0)" >nul 2>nul
+  if errorlevel 1 (
+    echo [setup] NVIDIA GPU detected; installing CUDA acceleration...
+    "%VENV_PY%" -m pip install --disable-pip-version-check -r requirements-gpu.txt
+  )
+)
 
 rem Make the icon and user shortcuts once. Failures here do not stop the bench.
 if not exist "%RUNTIME%" mkdir "%RUNTIME%" >nul 2>nul

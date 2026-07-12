@@ -66,6 +66,21 @@ solve:
   rejection: "drop_brightest"     # none | drop_brightest | drop_brightest_and_darkest
   min_surviving: 3
   ridge_lambda: 1.0e-6            # tiny Tikhonov for numerical stability of (LtL)^-1
+  misreg:                         # repair locally-misaligned samples (manual
+                                  # re-flattening between rotations is never exact;
+                                  # leftover per-scan misalignment speckles the normals)
+    enabled: true
+    flush_deg: 12.0               # suspect: normal deviates this much from the 5px median
+    hard_rel: 0.7                 # suspect regardless of flushness: leave-one-out
+                                  # residual/albedo above this (coherent artifact blobs)
+    improve_deg: 5.0              # accept a leave-one-out repair only if it agrees with
+                                  # the trusted neighborhood this much better
+    fill_flush_deg: 20.0          # inpaint only pixels still this far off the trusted
+    fill_rel: 0.5                 #   field AND at least this inconsistent (never fills
+                                  #   sharp-but-consistent real geometry)
+    ref_sigma: 6.0                # radius of the trusted-neighborhood normal field
+    albedo_floor: 0.02            # don't let near-black pixels amplify noise
+    fill_dilate_px: 1             # grow the inpaint mask to catch fringes
 
 integrate:
   enabled: true
@@ -96,6 +111,8 @@ transmission:                     # stretch goal §10 (off by default)
   blend_into_height: 0.0          # weight of transmission veins into height (0 = off)
 
 runtime:
+  compute: "auto"                  # auto | cpu | gpu; GPU uses CuPy when installed
+  cpu_threads: 4                  # keep alignment responsive; avoid desktop-wide stalls
   scale: 1.0                      # global downscale for development (spec §11)
   auto_crop: true                 # crop scans to a common leaf ROI before the
                                   # full-res solve so large stacks fit in memory

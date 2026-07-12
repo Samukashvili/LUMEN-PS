@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 650" role="img" aria-labelledby="title desc">
+  <title id="title">Pixel-level artistic visualization of bad-normal repair and inpainting</title>
+  <desc id="desc">A magnified normal-map grid moves through suspect detection, leave-one-out repair, selective inpainting, and a clean final field while a real sharp vein remains intact.</desc>
+  <defs>
+    <linearGradient id="back" x2="0" y2="1"><stop stop-color="#111b27"/><stop offset="1" stop-color="#080e16"/></linearGradient>
+    <linearGradient id="pixelA" x2="1" y2="1"><stop stop-color="#777dff"/><stop offset="1" stop-color="#9888f7"/></linearGradient>
+    <linearGradient id="pixelB" x2="1" y2="1"><stop stop-color="#6578ed"/><stop offset="1" stop-color="#8297ff"/></linearGradient>
+    <linearGradient id="bad" x2="1" y2="1"><stop stop-color="#ffca61"/><stop offset=".55" stop-color="#ff655d"/><stop offset="1" stop-color="#c83f73"/></linearGradient>
+    <radialGradient id="hole"><stop stop-color="#05080d"/><stop offset=".7" stop-color="#0b121b"/><stop offset="1" stop-color="#263849"/></radialGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="7"/></filter>
+    <filter id="glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <marker id="arrowAmber" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 9 4.5 0 9Z" fill="#ffb454"/></marker>
+    <marker id="arrowCyan" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 9 4.5 0 9Z" fill="#79dcff"/></marker>
+    <g id="px"><rect width="29" height="29" rx="2" fill="url(#pixelA)" stroke="#b6bdff" stroke-opacity=".18"/></g>
+    <g id="px2"><rect width="29" height="29" rx="2" fill="url(#pixelB)" stroke="#b6bdff" stroke-opacity=".18"/></g>
+    <g id="vein"><rect width="29" height="29" rx="2" fill="#5dc8e5" stroke="#bdf3ff" stroke-opacity=".45"/></g>
+  </defs>
+
+  <rect width="1400" height="650" rx="28" fill="url(#back)"/>
+  <circle cx="245" cy="328" r="190" fill="#5a66ff" opacity=".08" filter="url(#soft)"/>
+  <circle cx="1150" cy="328" r="190" fill="#43d9ff" opacity=".06" filter="url(#soft)"/>
+  <g font-family="system-ui,Segoe UI,sans-serif">
+    <text x="48" y="50" fill="#f2f7fa" font-size="25" font-weight="750" letter-spacing=".7">INSIDE THE NORMAL MAP · ONE SQUARE = ONE PIXEL</text>
+    <text x="48" y="78" fill="#8ca4b6" font-size="15">An artistic magnification of the decision process—not a processed scan.</text>
+
+    <!-- Panel 1: suspect pixels in a magnified normal field -->
+    <g transform="translate(42 108)">
+      <rect width="304" height="466" rx="18" fill="#121d29" stroke="#2d4253"/>
+      <text x="19" y="32" fill="#ffbd68" font-size="13" font-weight="700">A · RAW NORMAL FIELD</text>
+      <text x="19" y="55" fill="#dce7ed" font-size="17" font-weight="650">Two pixels break formation</text>
+      <g transform="translate(40 84)">
+        <!-- 7 x 7 encoded normal pixels -->
+        <g>
+          <use href="#px" x="0" y="0"/><use href="#px2" x="31" y="0"/><use href="#px" x="62" y="0"/><use href="#px2" x="93" y="0"/><use href="#px" x="124" y="0"/><use href="#px2" x="155" y="0"/><use href="#px" x="186" y="0"/>
+          <use href="#px2" x="0" y="31"/><use href="#px" x="31" y="31"/><use href="#px2" x="62" y="31"/><use href="#vein" x="93" y="31"/><use href="#px2" x="124" y="31"/><use href="#px" x="155" y="31"/><use href="#px2" x="186" y="31"/>
+          <use href="#px" x="0" y="62"/><use href="#px2" x="31" y="62"/><use href="#px" x="62" y="62"/><use href="#vein" x="93" y="62"/><use href="#px" x="124" y="62"/><use href="#px2" x="155" y="62"/><use href="#px" x="186" y="62"/>
+          <use href="#px2" x="0" y="93"/><use href="#px" x="31" y="93"/><use href="#px2" x="62" y="93"/><rect x="93" y="93" width="29" height="29" rx="2" fill="url(#bad)"/><use href="#px2" x="124" y="93"/><use href="#px" x="155" y="93"/><use href="#px2" x="186" y="93"/>
+          <use href="#px" x="0" y="124"/><use href="#px2" x="31" y="124"/><use href="#px" x="62" y="124"/><use href="#vein" x="93" y="124"/><use href="#px" x="124" y="124"/><rect x="155" y="124" width="29" height="29" rx="2" fill="url(#bad)"/><use href="#px" x="186" y="124"/>
+          <use href="#px2" x="0" y="155"/><use href="#px" x="31" y="155"/><use href="#px2" x="62" y="155"/><use href="#vein" x="93" y="155"/><use href="#px2" x="124" y="155"/><use href="#px" x="155" y="155"/><use href="#px2" x="186" y="155"/>
+          <use href="#px" x="0" y="186"/><use href="#px2" x="31" y="186"/><use href="#px" x="62" y="186"/><use href="#px2" x="93" y="186"/><use href="#px" x="124" y="186"/><use href="#px2" x="155" y="186"/><use href="#px" x="186" y="186"/>
+        </g>
+        <circle cx="107.5" cy="107.5" r="21" fill="none" stroke="#ff685f" stroke-width="3" filter="url(#glow)"/>
+        <circle cx="169.5" cy="138.5" r="21" fill="none" stroke="#ff685f" stroke-width="3" filter="url(#glow)"/>
+      </g>
+      <g transform="translate(20 327)" font-size="13">
+        <path d="M2 0h28" stroke="#79dcff" stroke-width="5"/><text x="39" y="5" fill="#9fb3c2">coherent sharp vein</text>
+        <path d="M2 27h28" stroke="#ff665e" stroke-width="5"/><text x="39" y="32" fill="#9fb3c2">angle + residual suspect</text>
+      </g>
+      <text x="20" y="417" fill="#71899b" font-size="12">Color encodes XYZ direction.</text>
+      <text x="20" y="438" fill="#d6e1e8" font-size="12">The cyan vein is sharp—but consistent.</text>
+    </g>
+
+    <path d="M354 340h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrowAmber)"/>
+
+    <!-- Panel 2: leave-one-out reconstruction -->
+    <g transform="translate(392 108)">
+      <rect width="304" height="466" rx="18" fill="#121d29" stroke="#2d4253"/>
+      <text x="19" y="32" fill="#ffbd68" font-size="13" font-weight="700">B · REPAIRABLE PIXEL</text>
+      <text x="19" y="55" fill="#dce7ed" font-size="17" font-weight="650">Drop the lying observation</text>
+      <g transform="translate(152 189)">
+        <circle r="76" fill="#0c141e" stroke="#324a5d" stroke-width="2"/>
+        <circle r="15" fill="url(#bad)" filter="url(#glow)"/>
+        <path d="M0 0L-55-88" stroke="#7d8cff" stroke-width="5" marker-end="url(#arrowCyan)"/>
+        <path d="M0 0L84-45" stroke="#80a5ff" stroke-width="5" marker-end="url(#arrowCyan)"/>
+        <path d="M0 0L47 86" stroke="#ff655d" stroke-width="6"/>
+        <path d="M0 0L-84 43" stroke="#82d9ee" stroke-width="5" marker-end="url(#arrowCyan)"/>
+        <path d="M29 69l36 34m0-34l-36 34" stroke="#fff2e8" stroke-width="4"/>
+        <text x="-80" y="-94" fill="#aebdff" font-size="12">k0</text><text x="88" y="-45" fill="#aebdff" font-size="12">k1</text>
+        <text x="52" y="82" fill="#ff8b83" font-size="12">k2 rejected</text><text x="-105" y="47" fill="#a5efff" font-size="12">k3</text>
+      </g>
+      <path d="M152 288v57" stroke="#ffb454" stroke-width="4" marker-end="url(#arrowAmber)"/>
+      <g transform="translate(152 372)">
+        <rect x="-25" y="-25" width="50" height="50" rx="4" fill="url(#pixelA)" stroke="#ffbd68" stroke-width="3"/>
+        <path d="M0 0l4-50" stroke="#79dcff" stroke-width="5" marker-end="url(#arrowCyan)"/>
+      </g>
+      <text x="20" y="434" fill="#d6e1e8" font-size="12">Three consistent scans produce a new unit normal.</text>
+    </g>
+
+    <path d="M704 340h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrowAmber)"/>
+
+    <!-- Panel 3: inpaint only an underdetermined pixel -->
+    <g transform="translate(742 108)">
+      <rect width="304" height="466" rx="18" fill="#121d29" stroke="#2d4253"/>
+      <text x="19" y="32" fill="#ffbd68" font-size="13" font-weight="700">C · UNRECOVERABLE PIXEL</text>
+      <text x="19" y="55" fill="#dce7ed" font-size="17" font-weight="650">Inpaint from trusted neighbors</text>
+      <g transform="translate(55 95)">
+        <use href="#px2" x="0" y="0"/><use href="#px" x="42" y="0"/><use href="#px2" x="84" y="0"/><use href="#px" x="126" y="0"/><use href="#px2" x="168" y="0"/>
+        <use href="#px" x="0" y="42"/><use href="#px2" x="42" y="42"/><use href="#px" x="84" y="42"/><use href="#px2" x="126" y="42"/><use href="#px" x="168" y="42"/>
+        <use href="#px2" x="0" y="84"/><use href="#px" x="42" y="84"/><rect x="84" y="84" width="29" height="29" rx="3" fill="url(#hole)" stroke="#ff665e" stroke-width="3"/><use href="#px" x="126" y="84"/><use href="#px2" x="168" y="84"/>
+        <use href="#px" x="0" y="126"/><use href="#px2" x="42" y="126"/><use href="#px" x="84" y="126"/><use href="#px2" x="126" y="126"/><use href="#px" x="168" y="126"/>
+        <use href="#px2" x="0" y="168"/><use href="#px" x="42" y="168"/><use href="#px2" x="84" y="168"/><use href="#px" x="126" y="168"/><use href="#px2" x="168" y="168"/>
+        <g stroke="#79dcff" stroke-width="3" opacity=".85" marker-end="url(#arrowCyan)">
+          <path d="M99 50v29"/><path d="M50 99h29"/><path d="M148 99h-29"/><path d="M99 148v-29"/>
+          <path d="M62 62l22 22"/><path d="M136 62l-22 22"/><path d="M62 136l22-22"/><path d="M136 136l-22-22"/>
+        </g>
+      </g>
+      <g transform="translate(151 339)">
+        <circle r="31" fill="#0b131d" stroke="#375165"/>
+        <path d="M0 0l2-45" stroke="#79dcff" stroke-width="5" marker-end="url(#arrowCyan)"/>
+        <path d="M-15 20Q0 29 15 20" fill="none" stroke="#ffb454" stroke-width="3"/>
+      </g>
+      <text x="20" y="411" fill="#9fb3c2" font-size="12">Only if residual + angular gates both fail.</text>
+      <text x="20" y="434" fill="#d6e1e8" font-size="12">Interpolated XYZ is normalized back to length 1.</text>
+    </g>
+
+    <path d="M1054 340h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrowAmber)"/>
+
+    <!-- Panel 4: final coherent map with provenance outlines -->
+    <g transform="translate(1092 108)">
+      <rect width="266" height="466" rx="18" fill="#121d29" stroke="#2d4253"/>
+      <text x="19" y="32" fill="#ffbd68" font-size="13" font-weight="700">D · FINAL FIELD</text>
+      <text x="19" y="55" fill="#dce7ed" font-size="17" font-weight="650">Coherent, not flattened</text>
+      <g transform="translate(24 84)">
+        <g>
+          <use href="#px" x="0" y="0"/><use href="#px2" x="31" y="0"/><use href="#px" x="62" y="0"/><use href="#px2" x="93" y="0"/><use href="#px" x="124" y="0"/><use href="#px2" x="155" y="0"/><use href="#px" x="186" y="0"/>
+          <use href="#px2" x="0" y="31"/><use href="#px" x="31" y="31"/><use href="#px2" x="62" y="31"/><use href="#vein" x="93" y="31"/><use href="#px2" x="124" y="31"/><use href="#px" x="155" y="31"/><use href="#px2" x="186" y="31"/>
+          <use href="#px" x="0" y="62"/><use href="#px2" x="31" y="62"/><use href="#px" x="62" y="62"/><use href="#vein" x="93" y="62"/><use href="#px" x="124" y="62"/><use href="#px2" x="155" y="62"/><use href="#px" x="186" y="62"/>
+          <use href="#px2" x="0" y="93"/><use href="#px" x="31" y="93"/><use href="#px2" x="62" y="93"/><use href="#vein" x="93" y="93"/><use href="#px2" x="124" y="93"/><use href="#px" x="155" y="93"/><use href="#px2" x="186" y="93"/>
+          <use href="#px" x="0" y="124"/><use href="#px2" x="31" y="124"/><use href="#px" x="62" y="124"/><use href="#vein" x="93" y="124"/><use href="#px" x="124" y="124"/><use href="#px2" x="155" y="124"/><use href="#px" x="186" y="124"/>
+          <use href="#px2" x="0" y="155"/><use href="#px" x="31" y="155"/><use href="#px2" x="62" y="155"/><use href="#vein" x="93" y="155"/><use href="#px2" x="124" y="155"/><use href="#px" x="155" y="155"/><use href="#px2" x="186" y="155"/>
+          <use href="#px" x="0" y="186"/><use href="#px2" x="31" y="186"/><use href="#px" x="62" y="186"/><use href="#px2" x="93" y="186"/><use href="#px" x="124" y="186"/><use href="#px2" x="155" y="186"/><use href="#px" x="186" y="186"/>
+        </g>
+        <rect x="93" y="93" width="29" height="29" rx="2" fill="none" stroke="#ffb454" stroke-width="3"/>
+        <rect x="155" y="124" width="29" height="29" rx="2" fill="none" stroke="#ff665e" stroke-width="3"/>
+      </g>
+      <g transform="translate(20 327)" font-size="12">
+        <rect width="12" height="12" fill="none" stroke="#ffb454" stroke-width="3"/><text x="21" y="11" fill="#9fb3c2">re-solved pixel</text>
+        <rect y="27" width="12" height="12" fill="none" stroke="#ff665e" stroke-width="3"/><text x="21" y="38" fill="#9fb3c2">inpainted pixel</text>
+        <rect y="54" width="12" height="12" fill="#5dc8e5"/><text x="21" y="65" fill="#9fb3c2">real vein preserved</text>
+      </g>
+      <text x="20" y="434" fill="#d6e1e8" font-size="12">Outlines are QA provenance only.</text>
+    </g>
+
+    <text x="48" y="621" fill="#70899b" font-size="12">NORMAL ENCODING</text>
+    <rect x="178" y="607" width="20" height="20" rx="3" fill="#817fff"/><text x="208" y="621" fill="#9fb3c2" font-size="12">surface direction</text>
+    <rect x="338" y="607" width="20" height="20" rx="3" fill="#5dc8e5"/><text x="368" y="621" fill="#9fb3c2" font-size="12">consistent sharp feature</text>
+    <rect x="545" y="607" width="20" height="20" rx="3" fill="url(#bad)"/><text x="575" y="621" fill="#9fb3c2" font-size="12">suspect / unresolved</text>
+    <path d="M758 617h32" stroke="#79dcff" stroke-width="4" marker-end="url(#arrowCyan)"/><text x="803" y="621" fill="#9fb3c2" font-size="12">normal vector / interpolation influence</text>
+  </g>
+</svg>

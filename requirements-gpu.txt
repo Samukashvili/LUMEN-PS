@@ -1,0 +1,4 @@
+# Optional NVIDIA CUDA acceleration. The wheel bundles the CUDA user-space
+# runtime; only a sufficiently recent NVIDIA display driver is required.
+-r requirements.txt
+cupy-cuda12x[ctk]>=14.1

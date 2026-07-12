@@ -10,9 +10,56 @@ speculars; optionally also the darkest to kill shadows. Never drop below
 """
 from __future__ import annotations
 
+import os
+import warnings
+
 import numpy as np
 
 __all__ = ["compute_weights", "photometric_solve", "rerender"]
+
+
+def _array_backend(requested: str | None):
+    """Return NumPy or optional CuPy without making CUDA a hard dependency."""
+    name = (requested or os.environ.get("LEAFSCAN_COMPUTE", "auto")).lower()
+    if name not in ("auto", "cpu", "gpu"):
+        raise ValueError("compute backend must be 'auto', 'cpu', or 'gpu'")
+    # The binary-pattern CPU path solves at most 16 tiny systems and is faster
+    # than CUDA transfer/kernel startup even at 25 MP. GPU remains forceable.
+    if name in ("auto", "cpu"):
+        return np, False
+    from .compute import cupy_backend
+    cp = cupy_backend(name)
+    if cp is not None:
+        return cp, True
+    if name == "gpu":
+        warnings.warn("GPU solve unavailable; using optimized CPU solve")
+    return np, False
+
+
+def _solve_binary_patterns(I, L, w, solvable, ridge_lambda, xp):
+    """Solve binary-weight systems once per distinct sample pattern.
+
+    Four captures produce at most 16 systems. Grouping pixels by pattern avoids
+    constructing and factorizing one 3x3 matrix per pixel, which dominated
+    full-resolution runs after the cleanup pass added another solve.
+    """
+    N, P = I.shape
+    codes = xp.zeros(P, dtype=xp.uint16)
+    for k in range(N):
+        codes |= (w[k] > 0).astype(xp.uint16) << k
+    g = xp.zeros((P, 3), dtype=xp.float32)
+    eye = xp.eye(3, dtype=xp.float32)
+    for code in range(1, 1 << N):
+        pix = xp.flatnonzero(solvable & (codes == code))
+        if not pix.size:
+            continue
+        keep = xp.asarray([(code >> k) & 1 for k in range(N)], dtype=xp.bool_)
+        Lk = L[keep]
+        inverse = xp.linalg.inv(Lk.T @ Lk + ridge_lambda * eye)
+        # (M,N) @ (N,3): no per-pixel matrices and bounded temporary memory.
+        b = (w[:, pix] * I[:, pix]).T @ L
+        g[pix] = b @ inverse.T
+    return g
 
 
 def compute_weights(
@@ -55,6 +102,8 @@ def photometric_solve(
     rejection: str = "drop_brightest",
     min_surviving: int = 3,
     ridge_lambda: float = 1e-6,
+    weights: np.ndarray | None = None,
+    backend: str | None = None,
 ):
     """Solve for normals + albedo.
 
@@ -63,6 +112,9 @@ def photometric_solve(
     I_stack : (N, H, W) float32 linear luminance, aligned to the reference frame.
     L       : (N, 3) light directions from :mod:`lights`.
     valid_stack : (N, H, W) bool or None. None => all samples valid.
+    weights : (N, H, W) float or None. If given, use these per-sample weights
+        directly and skip the ``rejection`` heuristic (caller-driven rejection,
+        e.g. residual-based misregistration cleanup).
 
     Returns
     -------
@@ -75,39 +127,59 @@ def photometric_solve(
     """
     N, H, W = I_stack.shape
     P = H * W
-    I = I_stack.reshape(N, P).astype(np.float32)
+    xp, on_gpu = _array_backend(backend)
+    L = xp.asarray(L, dtype=xp.float32)
+    I = xp.asarray(I_stack.reshape(N, P), dtype=xp.float32)
     if valid_stack is None:
-        valid = np.ones((N, P), dtype=bool)
+        valid = xp.ones((N, P), dtype=xp.bool_)
     else:
-        valid = valid_stack.reshape(N, P).astype(bool)
+        valid = xp.asarray(valid_stack.reshape(N, P), dtype=xp.bool_)
 
-    w = compute_weights(I, valid, rejection, min_surviving)
+    if weights is not None:
+        w = xp.asarray(weights.reshape(N, P), dtype=xp.float32) * valid
+    else:
+        # Weight selection is tiny (four rows) and compute_weights is also used
+        # independently by callers, so retain one canonical NumPy implementation.
+        w = xp.asarray(compute_weights(np.asarray(I_stack).reshape(N, P),
+                                       np.asarray(valid_stack).reshape(N, P)
+                                       if valid_stack is not None else np.ones((N, P), bool),
+                                       rejection, min_surviving))
     surviving = w.sum(axis=0)
     solvable = surviving >= min_surviving
-    pix = np.flatnonzero(solvable)
+    normal = xp.zeros((P, 3), dtype=xp.float32)
+    albedo = xp.zeros(P, dtype=xp.float32)
 
-    normal = np.zeros((P, 3), dtype=np.float32)
-    albedo = np.zeros(P, dtype=np.float32)
+    if bool(solvable.any()):
+        binary = bool(xp.all((w == 0) | (w == 1)))
+        if binary:
+            g = _solve_binary_patterns(I, L, w, solvable, ridge_lambda, xp)
+        else:
+            pix = xp.flatnonzero(solvable)
+            LL = xp.einsum("ni,nj->nij", L, L)
+            A = xp.einsum("nm,nij->mij", w[:, pix], LL)
+            b = xp.einsum("nm,ni->mi", w[:, pix] * I[:, pix], L)
+            A += ridge_lambda * xp.eye(3, dtype=xp.float32)[None]
+            g = xp.zeros((P, 3), dtype=xp.float32)
+            g[pix] = xp.linalg.solve(A, b[..., None])[..., 0]
 
-    if pix.size:
-        Ip = I[:, pix]                       # (N, M)
-        wp = w[:, pix]                        # (N, M)
-        LL = np.einsum("ni,nj->nij", L, L)   # (N, 3, 3)
-        A = np.einsum("nm,nij->mij", wp, LL) # (M, 3, 3)
-        b = np.einsum("nm,ni->mi", wp * Ip, L)  # (M, 3)
-        A = A + ridge_lambda * np.eye(3, dtype=A.dtype)[None]
-        g = np.linalg.solve(A, b[..., None])[..., 0]  # (M, 3)
-
-        rho = np.linalg.norm(g, axis=1)
+        rho = xp.linalg.norm(g, axis=1)
         good = rho > 1e-8
-        n = np.zeros_like(g)
+        n = xp.zeros_like(g)
         n[good] = g[good] / rho[good, None]
         # Enforce a viewer-facing normal (+Z out of the glass).
         flip = n[:, 2] < 0
         n[flip] *= -1.0
 
-        normal[pix] = n
-        albedo[pix] = rho
+        normal[solvable] = n[solvable]
+        albedo[solvable] = rho[solvable]
+
+    if on_gpu:
+        normal, albedo, solvable, surviving, w = [xp.asnumpy(x) for x in
+                                                  (normal, albedo, solvable, surviving, w)]
+        # CuPy caches allocations by default. Returning them here prevents the
+        # 4 GB laptop GPU from staying full while integration/viewer starts.
+        from .compute import release_gpu_memory
+        release_gpu_memory(xp)
 
     return {
         "normal": normal.reshape(H, W, 3),
@@ -120,5 +192,5 @@ def photometric_solve(
 
 def rerender(normal: np.ndarray, albedo: np.ndarray, L: np.ndarray) -> np.ndarray:
     """Re-render the N lighting conditions: I_pred_k = rho * max(N.L_k, 0)."""
-    ndotl = np.einsum("hwc,nc->nhw", normal, L)
+    ndotl = np.einsum("hwc,nc->nhw", normal, np.asarray(L, dtype=np.float32))
     return np.clip(ndotl, 0.0, None) * albedo[None]

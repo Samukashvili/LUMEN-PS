@@ -23,10 +23,10 @@ def colorize(x, mask=None, gamma=1.0, percentile=(1, 99)):
     return (y * 255).astype(np.uint8)
 
 
-def residual_report(I_stack, normal, albedo, L, valid):
+def residual_report(I_stack, normal, albedo, L, valid, backend="auto"):
     """Per-scan residual maps + scalar stats (spec §8.4)."""
-    pred = rerender(normal, albedo, L)
-    resid = np.abs(pred - I_stack)  # (N,H,W)
+    from .compute import residual_stack
+    resid, pred = residual_stack(I_stack, normal, albedo, L, backend=backend)
     stats = []
     m = valid
     for k in range(resid.shape[0]):
@@ -42,14 +42,15 @@ def residual_report(I_stack, normal, albedo, L, valid):
 
 def write_qa(qa_dir, *, I_stack, normal, albedo, L, valid, nsamples,
              thetas=None, az0=None, el=None, subsurface=None, weights=None,
-             extra_text=None):
+             repair=None, backend="auto", extra_text=None):
     """Emit all diagnostic renders + a residual/light-vector text report."""
     from PIL import Image
     qa = Path(qa_dir)
     qa.mkdir(parents=True, exist_ok=True)
 
     # 1. re-render residuals (the money diagnostic)
-    resid, pred, stats = residual_report(I_stack, normal, albedo, L, valid)
+    resid, pred, stats = residual_report(I_stack, normal, albedo, L, valid,
+                                         backend=backend)
     for k in range(resid.shape[0]):
         Image.fromarray(colorize(resid[k], valid, percentile=(1, 99))).save(
             qa / f"residual_scan{k}.png")
@@ -79,7 +80,11 @@ def write_qa(qa_dir, *, I_stack, normal, albedo, L, valid, nsamples,
         Image.fromarray(colorize(cov, valid, percentile=(0, 100))).save(
             qa / "rejection_coverage.png")
 
-    # 6. text report — light vectors + residual stats
+    # 6. misregistration repair map (gray=repaired from 3 scans, white=inpainted)
+    if repair is not None:
+        Image.fromarray(repair).save(qa / "misreg_repair.png")
+
+    # 7. text report — light vectors + residual stats
     lines = []
     if az0 is not None and el is not None:
         lines.append(f"az0 = {az0:.3f} deg   el = {el:.3f} deg")

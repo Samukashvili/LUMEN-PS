@@ -7,8 +7,8 @@ cardboard, bark, and other flat matte materials are also candidates. Avoid very
 shiny subjects, and use caution with rigid objects: raised, heavy, or sharp
 items can scratch or crack the scanner glass or damage its lid/mechanism.
 
-A complete real run of the pipeline on a single grape leaf, captured on the
-HP LaserJet M1130/M1132 flatbed at 600 dpi. These are **compressed, downscaled
+A complete filtered run of the pipeline on a Kiwi leaf, captured on the
+HP LaserJet M1130/M1132 flatbed at 1200 dpi. These are **compressed, downscaled
 images for documentation only** — photos/diagnostics are JPEG, normal maps and
 anything with alpha are 8-bit PNG. The originals were the full-res lossless
 outputs; regenerate them by re-capturing and running the pipeline.
@@ -20,12 +20,16 @@ left → down → right → up), cropped to a common scanner-space ROI around th
 real run needs lossless PNG/TIFF captures — the CLI ignores JPEGs on purpose.)*
 
 ## `results/`
-Final deliverables (downscaled to ≤2048 px):
+Final deliverables (downscaled to ≤1500 px):
 - `normal_gl.png` / `normal_dx.png` — tangent-space normal maps
 - `albedo.jpg` (linear — looks dark) / `albedo_srgb.jpg` — lighting-free base colour
 - `alpha.png` — subject silhouette / opacity
 - `albedo_srgb_rgba.png`, `normal_gl_rgba.png` — RGBA copies for a transparent plane
 - `height.jpg` — Frankot–Chellappa integrated relief
+
+These result previews include residual-guided bad-normal repair. The original
+full-resolution filtered sources are from
+`sessions/kiwi-leaf-20260712-184906/out`.
 
 ## `qa/`
 The diagnostic set (spec §8.4 — the re-render residual is the main trust signal):
@@ -36,7 +40,7 @@ The diagnostic set (spec §8.4 — the re-render residual is the main trust sign
 - `normal_preview.png` — 8-bit preview of the normal map.
 - `subsurface_hint.jpg` — R−B channel difference (vein/subsurface hint, §5.2).
 - `rejection_coverage.jpg` — how often each pixel survived outlier rejection.
-- `edge_zoom2.jpg` — boundary close-up over transparency (clean cutout, no white
-  halo, no fill stretch).
+- `misreg_repair.png` — gray pixels were re-solved after rejecting one locally
+  inconsistent observation; white pixels required selective inpainting.
 - `report.txt` — fitted light vectors + residual stats for this run
-  (self-calibrated: az0 ≈ 118°, el ≈ 54°).
+  (self-calibrated: az0 = 90°, el = 45°).

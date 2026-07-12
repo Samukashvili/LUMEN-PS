@@ -88,3 +88,41 @@ def test_min_surviving_marks_invalid():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_residual_repair_fixes_local_misregistration():
+    """Emulate a locally misaligned scan (manual re-flattening mismatch): shift a
+    patch of one scan by a few px. Repair must recover the true normals there."""
+    from leafscan.cleanup import residual_repair
+
+    N_true, rho_true = _synthetic_surface()
+    L = light_directions(90.0, 35.0, nominal_thetas())
+    I = np.clip(np.einsum("hwc,nc->nhw", N_true, L), 0, None) * rho_true[None]
+    I_bad = I.copy()
+    # scan 1: patch shifted 3 px right (misregistration), where albedo varies
+    I_bad[1, 20:60, 30:80] = I[1, 20:60, 27:77]
+
+    first = photometric_solve(I_bad, L, rejection="drop_brightest")
+    # synthetic data is noise-free and perfectly Lambertian, so the gates can be
+    # much tighter than the real-scan defaults
+    out, repaired, fill = residual_repair(I_bad, L, first, flush_deg=4.0,
+                                          hard_rel=0.10, improve_deg=1.0,
+                                          fill_flush_deg=8.0, fill_rel=0.10)
+
+    patch = np.zeros(N_true.shape[:2], bool)
+    patch[20:60, 30:80] = True
+    ang_first = _angular_error_deg(first["normal"], N_true, patch)
+    ang_fixed = _angular_error_deg(out["normal"], N_true, patch & out["valid"] & ~fill)
+
+    # detection: flagged pixels live (almost) only inside the shifted patch
+    flagged = repaired | fill
+    assert flagged[patch].sum() > 0
+    assert flagged[~patch].sum() <= 0.001 * (~patch).sum()
+    # repair: error inside the patch drops dramatically for surviving pixels
+    assert ang_first.max() > 10.0
+    assert ang_fixed.max() < 2.0
+    # untouched pixels keep the original solution
+    away = ~patch.copy()
+    away[15:65, 22:85] = False
+    d = _angular_error_deg(out["normal"], first["normal"], away)
+    assert d.max() < 0.05  # float32 arccos noise on identical vectors

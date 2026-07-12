@@ -54,16 +54,11 @@ def _find_scans(scan_arg, n=4):
     return files
 
 
-def _color_albedo(rgb_stack, normal, L, weights):
+def _color_albedo(rgb_stack, normal, L, weights, backend="auto"):
     """Lighting-free per-channel base colour: mean over surviving samples of
     rgb_k / max(N.L_k, 0). Spec §5.2 (keep RGB for albedo)."""
-    N, H, W, _ = rgb_stack.shape
-    ndotl = np.clip(np.einsum("hwc,nc->nhw", normal, L), 0, None)  # (N,H,W)
-    w = weights * (ndotl > 1e-3)
-    est = rgb_stack / np.clip(ndotl[..., None], 1e-3, None)        # (N,H,W,3)
-    num = (est * w[..., None]).sum(axis=0)
-    den = np.clip(w.sum(axis=0), 1e-6, None)[..., None]
-    return np.clip(num / den, 0, 1).astype(np.float32)
+    from .compute import color_albedo
+    return color_albedo(rgb_stack, normal, L, weights, backend=backend)
 
 
 def _apply_box(arr, box_full, scale):
@@ -115,6 +110,13 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     def log(*a):
         if verbose:
             log_fn(" ".join(str(x) for x in a))
+
+    compute_backend = cfg.get("runtime", {}).get("compute", "auto")
+    from .compute import backend_description
+    log(f"[compute] {backend_description(compute_backend)}; tiled CUDA arrays enabled")
+    # Avoid monopolizing every CPU core during OpenCV-only alignment stages.
+    import cv2
+    cv2.setNumThreads(max(1, int(cfg.get("runtime", {}).get("cpu_threads", 4))))
 
     # ---- 0. optional auto-ROI crop (keeps full-res stacks within memory) ----
     crop_box = None
@@ -224,12 +226,59 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     out = photometric_solve(I_stack, L, valid_stack=valid_stack,
                             rejection=scfg["rejection"],
                             min_surviving=scfg["min_surviving"],
-                            ridge_lambda=float(scfg["ridge_lambda"]))
+                            ridge_lambda=float(scfg["ridge_lambda"]),
+                            backend=cfg.get("runtime", {}).get("compute", "auto"))
     normal, albedo_scalar, valid = out["normal"], out["albedo"], out["valid"]
     log(f"[solve] rejection={scfg['rejection']} -> {int(valid.sum())} solved pixels")
 
+    # ---- 8.5 misregistration repair (§8.5) ----
+    # Manual re-flattening between rotations leaves small locally-misaligned
+    # patches in single scans; their samples break Lambertian consensus and
+    # produce speckled off-normal pixels. Drop the worst-residual sample and
+    # re-solve where possible; invalidate (-> inpaint at step 9) the rest.
+    repair_map = None
+    misreg_fill = None
+    mcfg = scfg.get("misreg", {})
+    if mcfg.get("enabled", False):
+        from . import cleanup
+        out, repaired, misreg_fill = cleanup.residual_repair(
+            I_stack, L, out, valid_stack=valid_stack,
+            flush_deg=float(mcfg.get("flush_deg", 12.0)),
+            hard_rel=float(mcfg.get("hard_rel", 0.7)),
+            improve_deg=float(mcfg.get("improve_deg", 5.0)),
+            fill_flush_deg=float(mcfg.get("fill_flush_deg", 20.0)),
+            fill_rel=float(mcfg.get("fill_rel", 0.5)),
+            ref_sigma=float(mcfg.get("ref_sigma", 6.0)),
+            albedo_floor=float(mcfg.get("albedo_floor", 0.02)),
+            min_surviving=scfg["min_surviving"],
+            ridge_lambda=float(scfg["ridge_lambda"]),
+            backend=cfg.get("runtime", {}).get("compute", "auto"))
+        if misreg_fill.any():
+            # inpaint unrecoverable pixels IN PLACE — they stay valid so the
+            # alpha/core silhouette is not punched full of holes
+            dil = int(mcfg.get("fill_dilate_px", 1))
+            if dil > 0:
+                import cv2
+                k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (dil * 2 + 1,) * 2)
+                misreg_fill = cv2.dilate(misreg_fill.astype(np.uint8), k).astype(bool) \
+                    & out["valid"]
+            n = cleanup.inpaint_field(out["normal"], misreg_fill)
+            nrm = np.linalg.norm(n, axis=-1, keepdims=True)
+            out["normal"] = n / np.clip(nrm, 1e-8, None)
+        normal, albedo_scalar, valid = out["normal"], out["albedo"], out["valid"]
+        repair_map = np.zeros(valid.shape, np.uint8)
+        repair_map[repaired] = 128
+        repair_map[misreg_fill] = 255
+        log(f"[misreg] repaired={int(repaired.sum())}px "
+            f"inpainted={int(misreg_fill.sum())}px "
+            f"({100 * (repaired.sum() + misreg_fill.sum()) / max(1, valid.sum()):.2f}% of leaf)")
+
     # ---- 9. colour albedo + cleanup (§9.2) ----
-    albedo_rgb = _color_albedo(rgb_stack, normal, L, out["weights"])
+    albedo_rgb = _color_albedo(rgb_stack, normal, L, out["weights"],
+                               backend=compute_backend)
+    if misreg_fill is not None and misreg_fill.any():
+        from . import cleanup
+        albedo_rgb = cleanup.inpaint_field(albedo_rgb, misreg_fill)
     ocfg = cfg["output"]
     if ocfg["smooth"]["normals_bilateral"]:
         import cv2
@@ -288,7 +337,8 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     if cfg["integrate"]["enabled"]:
         # integrate over the clean core so padded pixels don't inject fake slopes
         height = integrate.integrate_height(
-            normal, core, cfg["integrate"]["highpass_sigma"])
+            normal, core, cfg["integrate"]["highpass_sigma"],
+            backend=compute_backend)
         log("[integrate] Frankot-Chellappa height computed")
 
     # ---- 11. outputs + QA ----
@@ -303,6 +353,8 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     stats = qa.write_qa(qa_dir, I_stack=I_stack, normal=normal, albedo=albedo_scalar,
                         L=L, valid=qa_valid, nsamples=nsamples, thetas=thetas,
                         az0=az0, el=el, subsurface=sub, weights=out["weights"],
+                        repair=repair_map,
+                        backend=compute_backend,
                         extra_text=f"light_source={source}  flat={flat_src}")
     log(f"[qa] residual means: {[round(s['mean'],4) for s in stats]}  -> {qa_dir}")
     return {"out_dir": out_dir, "az0": az0, "el": el, "thetas": thetas,

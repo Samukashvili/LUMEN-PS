@@ -1,14 +1,14 @@
-az0 = 118.125 deg   el = 53.969 deg
-thetas = [0.0, 89.321, 180.0, -89.775]
+az0 = 90.000 deg   el = 45.000 deg
+thetas = [0.0, 90.0, 180.0, -90.243]
 Light vectors L[k]:
-  L[0] = (-0.2773,+0.5188,+0.8087) az=118.12 |L|=1.0000
-  L[1] = (+0.5154,+0.2834,+0.8087) az= 28.80 |L|=1.0000
-  L[2] = (+0.2773,-0.5188,+0.8087) az=298.12 |L|=1.0000
-  L[3] = (-0.5199,-0.2753,+0.8087) az=207.90 |L|=1.0000
+  L[0] = (+0.0000,+0.7071,+0.7071) az= 90.00 |L|=1.0000
+  L[1] = (+0.7071,+0.0000,+0.7071) az=  0.00 |L|=1.0000
+  L[2] = (+0.0000,-0.7071,+0.7071) az=270.00 |L|=1.0000
+  L[3] = (-0.7071,-0.0030,+0.7071) az=180.24 |L|=1.0000
 Re-render residual (lower = more trustworthy):
-  scan0: mean=0.0092 p95=0.0551 max=0.8199
-  scan1: mean=0.0089 p95=0.0561 max=0.7709
-  scan2: mean=0.0088 p95=0.0549 max=1.0314
-  scan3: mean=0.0086 p95=0.0554 max=0.8448
-valid pixels: 5676799 / 10232944
-light_source=selfcal(res=0.0072)  flat=background-fit (no blank scan)
+  scan0: mean=0.0097 p95=0.0582 max=0.5861
+  scan1: mean=0.0093 p95=0.0577 max=1.0370
+  scan2: mean=0.0099 p95=0.0613 max=0.9383
+  scan3: mean=0.0092 p95=0.0582 max=0.7809
+valid pixels: 22754716 / 53942980
+light_source=selfcal(res=0.0081)  flat=background-fit (no blank scan)

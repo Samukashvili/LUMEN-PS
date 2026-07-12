@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 410" role="img" aria-labelledby="title desc">
+  <title id="title">Residual-guided bad-normal filtering pipeline</title>
+  <desc id="desc">Four panels show suspect detection, trusted neighborhood construction, leave-one-out repair, and selective inpainting while sharp consistent detail is preserved.</desc>
+  <defs>
+    <linearGradient id="bg" x2="0" y2="1"><stop stop-color="#111923"/><stop offset="1" stop-color="#0a1018"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#ffb454"/></marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1200" height="410" rx="24" fill="url(#bg)"/>
+  <g font-family="system-ui,Segoe UI,sans-serif">
+    <text x="42" y="46" fill="#eef4f8" font-size="23" font-weight="700">RESIDUAL-GUIDED NORMAL CLEANUP</text>
+    <text x="42" y="72" fill="#87a0b3" font-size="15">Repair only pixels that are both spatially suspicious and photometrically inconsistent.</text>
+
+    <g transform="translate(38 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">01 · DETECT</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Find suspect normals</text>
+      <g transform="translate(28 77)">
+        <path d="M0 50C42 8 94 92 142 38S198 63 198 63" fill="none" stroke="#707cff" stroke-width="7"/>
+        <circle cx="113" cy="65" r="10" fill="#ff625f" filter="url(#glow)"/>
+        <path d="M113 65l25-33" stroke="#ff625f" stroke-width="4"/>
+        <path d="M113 65l2-38" stroke="#85d7ff" stroke-width="3" stroke-dasharray="5 4"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">• angle from 5 px median</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">• normalized re-render residual</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">Red = candidate artifact</text>
+    </g>
+
+    <path d="M296 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(334 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">02 · REFERENCE</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Build trusted context</text>
+      <g transform="translate(25 78)">
+        <circle cx="100" cy="58" r="50" fill="#1b2c39" stroke="#3e596c"/>
+        <g stroke="#85d7ff" stroke-width="3">
+          <path d="M66 77l5-28"/><path d="M89 92l2-37"/><path d="M112 91l-2-38"/><path d="M134 77l-5-30"/>
+        </g>
+        <circle cx="100" cy="58" r="9" fill="#0d141c" stroke="#ff625f" stroke-width="3"/>
+        <path d="M100 58l1-39" stroke="#ffbd68" stroke-width="4"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">Smooth only non-suspect normals</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">into a local trusted direction.</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">No source pixels are changed yet.</text>
+    </g>
+
+    <path d="M592 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(630 98)">
+      <rect width="250" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">03 · RE-SOLVE</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Try each omitted scan</text>
+      <g transform="translate(24 78)">
+        <g font-size="12" text-anchor="middle">
+          <circle cx="25" cy="28" r="20" fill="#243746"/><text x="25" y="33" fill="#c9d6df">−k0</text>
+          <circle cx="75" cy="28" r="20" fill="#243746"/><text x="75" y="33" fill="#c9d6df">−k1</text>
+          <circle cx="125" cy="28" r="20" fill="#ffb454"/><text x="125" y="33" fill="#17212b">−k2</text>
+          <circle cx="175" cy="28" r="20" fill="#243746"/><text x="175" y="33" fill="#c9d6df">−k3</text>
+        </g>
+        <g transform="translate(125 75)">
+          <circle r="26" fill="#1a2b37" stroke="#ffb454" stroke-width="2"/>
+          <path d="M0 0l2-42" stroke="#85d7ff" stroke-width="5"/>
+          <path d="M0 0l3-39" stroke="#ffb454" stroke-width="2" stroke-dasharray="4 3"/>
+        </g>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">Choose the candidate closest to</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">trusted context—only if it improves.</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">The offending observation is dropped.</text>
+    </g>
+
+    <path d="M888 233h30" stroke="#ffb454" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g transform="translate(926 98)">
+      <rect width="236" height="270" rx="16" fill="#141f2a" stroke="#2c4050"/>
+      <text x="20" y="32" fill="#ffbd68" font-size="14" font-weight="700">04 · MERGE</text>
+      <text x="20" y="55" fill="#d8e2e9" font-size="16" font-weight="600">Repair conservatively</text>
+      <g transform="translate(24 77)">
+        <path d="M0 60C38 16 84 92 126 43S188 59 188 59" fill="none" stroke="#707cff" stroke-width="7"/>
+        <circle cx="103" cy="66" r="8" fill="#ffb454"/>
+        <path d="M103 66l2-37" stroke="#85d7ff" stroke-width="4"/>
+        <circle cx="157" cy="48" r="8" fill="#ff625f"/>
+        <path d="M150 41l14 14m0-14l-14 14" stroke="#fff" stroke-width="2"/>
+      </g>
+      <text x="20" y="180" fill="#9db0bf" font-size="13">Amber: repaired from 3 scans</text>
+      <text x="20" y="201" fill="#9db0bf" font-size="13">Red: unrecoverable → inpaint</text>
+      <text x="20" y="232" fill="#d8e2e9" font-size="13">Consistent sharp detail is preserved.</text>
+    </g>
+  </g>
+</svg>

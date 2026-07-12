@@ -10,6 +10,7 @@ Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no
 ![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows)
 ![Capture WIA 2.0](https://img.shields.io/badge/capture-WIA%202.0-f0a64a)
 ![Photometric stereo](https://img.shields.io/badge/reconstruction-photometric%20stereo-65a96b)
+![CUDA accelerated](https://img.shields.io/badge/acceleration-CUDA%20%2B%20CPU-76B900?logo=nvidia&logoColor=white)
 
 <img src="docs/assets/kiwi-relight.gif" width="640" alt="Recovered Kiwi leaf relit through a full 360 degree orbit">
 
@@ -51,7 +52,8 @@ Because the CIS lamp and sensor are so close, the useful difference is much smal
 | **3 · Register** | De-rotate using fiducials, refine rigid alignment, then correct small elastic changes. | The same output pixel must represent the same physical point in all four scans. |
 | **4 · Calibrate** | Fit lamp azimuth and elevation from a calibration card or from re-render error. | The light elevation controls how strongly recovered normals tilt. |
 | **5 · Solve** | Robustly solve `I = ρ(N · L)` per pixel, dropping highlight/shadow outliers. | Separates lighting-free albedo `ρ` from surface normal `N`. |
-| **6 · Integrate + verify** | Integrate the normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
+| **6 · Repair** | Detect locally inconsistent normals, identify a bad scan by leave-one-out re-solving, and selectively inpaint only unrecoverable pixels. | Removes registration/gloss artifacts without smoothing away trustworthy vein relief. |
+| **7 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
 
 ### What comes out
 
@@ -59,7 +61,7 @@ Because the CIS lamp and sensor are so close, the useful difference is much smal
 |:--:|:--:|:--:|
 | ![Recovered Kiwi sRGB albedo](docs/assets/kiwi-albedo.webp) | ![Recovered Kiwi OpenGL normal map](docs/assets/kiwi-normal.webp) | ![Integrated Kiwi height field](docs/assets/kiwi-height.webp) |
 
-These three previews come from the same completed `Kiwi Leaf` session used by the relighting animation. The height panel is contrast-mapped from its actual 16-bit `height.png`; it is not the obsolete flat output from an earlier integration failure. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. Full outputs remain 16-bit where useful; README images are compressed display copies only.
+These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. Full outputs remain 16-bit where useful; README images are compressed display copies only.
 
 ## Why it works
 
@@ -75,6 +77,52 @@ Two practical details make the result far better than a textbook least-squares s
 
 - **Registration is both rigid and non-rigid.** Thin subjects can settle differently after rotation; silhouette distance fields and vein/texture structure guide the correction.
 - **The solve is robust.** The brightest observation can be rejected to suppress specular glints, while pixels without at least three valid samples are excluded.
+
+## Filtering bad normal pixels without erasing real detail
+
+Even after rigid and non-rigid registration, a flexible subject may settle a few pixels differently between rotations. A glossy vein can also violate the Lambertian model in one observation. Either case can pull a solved normal sharply sideways and create isolated specks or coherent patches. A generic blur would hide those pixels, but it would also flatten genuine veins and creases, so LUMEN-PS uses residual-guided selective repair instead.
+
+![Diagram of residual-guided normal filtering: detect, build trusted context, leave-one-out re-solve, and selectively merge](docs/assets/normal-filtering-pipeline.svg)
+
+The cleanup pass works in four steps:
+
+1. **Detect candidates.** A pixel becomes suspect when its normal differs from the local 5 px component-median field, or when its albedo-normalized re-render residual is extreme. The residual test catches coherent artifact patches that can agree with their own local median.
+2. **Build trusted context.** Non-suspect neighboring normals form a smooth reference direction. Empty support is filled with bounded, linear-time nearest-supported interpolation—there is no unbounded large-kernel blur.
+3. **Identify the offending observation.** For each suspect pixel, the solver tries four leave-one-out candidates (`−k0` through `−k3`). It accepts the candidate closest to trusted context only when the angular agreement improves by the configured margin.
+4. **Merge conservatively.** A pixel that remains both far from trusted context and photometrically inconsistent is inpainted from its surroundings. A sharp but self-consistent normal is retained, and all repaired normals are renormalized before height integration and export.
+
+![Hand-made pixel-level illustration of suspect normal detection, three-scan repair, selective neighborhood inpainting, and the final coherent normal field](docs/assets/normal-pixel-repair.svg)
+
+At this magnification, the distinction between the two correction paths is explicit. A **repairable pixel** still has three mutually consistent lighting observations, so the solver discards the identified outlier and computes a replacement normal from real measurements. An **unrecoverable pixel** has no trustworthy three-view solution, so only that pixel is interpolated from surrounding trusted normals and renormalized. The cyan column represents a genuinely sharp, spatially coherent vein: it survives because sharpness alone is not sufficient to trigger replacement.
+
+<p align="center"><img src="docs/assets/kiwi-normal-filtering.webp" width="100%" alt="Filtered Kiwi normal map beside repair coverage: amber pixels were re-solved after dropping one scan and red pixels were selectively inpainted"></p>
+
+The coverage view above comes from the same filtered Kiwi output shown in the result gallery. Amber marks pixels recovered from three consistent scans; red marks unrecoverable pixels selectively inpainted in the final normal and albedo fields. The darkened normal underneath makes it clear that repair is sparse and targeted rather than a whole-image smoothing pass. Thresholds live under `solve.misreg` in [`leafscan/config.yaml`](leafscan/config.yaml), and the exact coverage remains available as `out/qa/misreg_repair.png`.
+
+## Performance and GPU architecture
+
+The 1200 dpi pipeline can operate on tens of millions of pixels, so LUMEN-PS uses a hybrid backend instead of forcing every operation onto one processor.
+
+| Workload | Backend in `auto` mode | Optimization |
+|:--|:--|:--|
+| Photometric normal solve | CPU | Four binary sample weights produce at most 16 distinct 3×3 systems. Each system is inverted once, then applied to all matching pixels—no per-pixel matrix factorization. |
+| RGB albedo recovery | NVIDIA CUDA | Processes VRAM-aware row tiles, avoiding a full four-view RGB stack allocation on the GPU. |
+| QA re-render + residuals | NVIDIA CUDA | Computes predicted lighting and absolute residuals in bounded tiles. |
+| Height integration | NVIDIA CUDA | Runs the Frankot–Chellappa FFT in float32 on the GPU. The CPU fallback also uses float32 to halve its previous peak memory. |
+| Alignment and optical flow | CPU/OpenCV | Remains CPU-side to preserve the established interpolation and registration behavior; OpenCV is capped at four threads by default so the desktop stays responsive. |
+| Misregistration cleanup | Hybrid | Uses grouped solves plus a bounded neighborhood/reference pass; the previous potentially runaway widening blur is replaced by linear-time support filling. |
+
+On an NVIDIA system, `run.bat` installs `requirements-gpu.txt` into the project virtual environment and stores compiled CUDA kernels under `.lumen-ps/cupy-cache`. GPU tiles are sized from currently free VRAM, cached allocations are released between stages, and `auto` falls back to the optimized CPU path if CUDA is unavailable or a tile cannot fit. This supports smaller laptop GPUs such as the tested 4 GB RTX 3050 without reserving VRAM needed by the browser or Windows desktop.
+
+The backend is configurable in [`leafscan/config.yaml`](leafscan/config.yaml):
+
+```yaml
+runtime:
+  compute: "auto"   # auto | cpu | gpu
+  cpu_threads: 4    # OpenCV alignment thread cap
+```
+
+`auto` is recommended: it keeps the tiny grouped linear systems on the faster CPU path while sending large array and FFT workloads to CUDA. `cpu` disables CUDA completely; `gpu` forces every supported operation onto CUDA and is mainly useful for profiling. CUDA and CPU paths feed the same normal, albedo, height, preview, QA, and export code, so acceleration does not create a separate rendering result.
 
 ### Details hidden inside the simple idea
 
@@ -93,7 +141,7 @@ The recovered albedo and normals are rendered back under each fitted scanner lig
 |:--:|:--:|:--:|
 | ![Observed scan](docs/qa/observed_scan0.jpg) | ![Predicted scan](docs/qa/predicted_scan0.jpg) | ![Absolute residual](docs/qa/residual_scan0.jpg) |
 
-The included worked run has mean residuals of **0.0086–0.0092** on normalized linear intensity. See [`docs/`](docs/) for all four observed, predicted, and residual views plus mask agreement and rejection coverage.
+The current filtered Kiwi run has mean residuals of **0.0092–0.0099** on normalized linear intensity. See [`docs/`](docs/) for all four observed, predicted, and residual views plus mask agreement, rejection coverage, and the new misregistration-repair coverage.
 
 ## Will my printer/scanner work?
 
@@ -132,12 +180,16 @@ The mathematical model assumes mostly diffuse reflection and shallow relief. Mil
 
 The launcher creates an isolated `.venv`, installs dependencies, starts the local LUMEN-PS bench, and opens `http://127.0.0.1:8756`. In the app: create a session, capture four rotations, process, then drag the light around the interactive result.
 
+If an NVIDIA GPU is detected, the first launch also installs the project-local CUDA runtime, cuBLAS, and cuFFT packages. This is a large one-time download; no system-wide CUDA Toolkit installation is required. Systems without a compatible NVIDIA GPU continue with the optimized CPU backend.
+
 ### Command line
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+# Optional NVIDIA CUDA backend:
+pip install -r requirements-gpu.txt
 
 python -m leafscan.cli capture --preview
 python -m leafscan.cli capture --out scans\sample\k0.png --dpi 600 --color
@@ -155,6 +207,7 @@ Optional references:
 
 - **Low, noise-like residual:** the model explains the scan; trust is high.
 - **Bright veins or isolated sparkles:** specular leakage; tighten outlier rejection.
+- **Gray/white areas in `misreg_repair.png`:** gray was repaired by dropping one bad observation; white required selective inpainting.
 - **Large smooth gradient:** flat-field correction or light elevation is wrong.
 - **Residual tracing the outline:** rigid/non-rigid registration failed.
 - **Fewer than 3 valid views:** that pixel is underdetermined and excluded.
@@ -167,7 +220,7 @@ python -m pytest tests -q
 python -m leafscan.cli selftest
 ```
 
-The implementation is organized into `io`, `lights`, `align`, `calibrate`, `solve`, `integrate`, `outputs`, and `qa`, with the WIA capture bridge and FastAPI/WebGL UI alongside them. Tunable values live in [`leafscan/config.yaml`](leafscan/config.yaml). The detailed derivation and design rationale live in [`scanner_photometric_stereo_spec.md`](scanner_photometric_stereo_spec.md).
+The implementation is organized into `io`, `lights`, `align`, `calibrate`, `solve`, `cleanup`, `compute`, `integrate`, `outputs`, and `qa`, with the WIA capture bridge and FastAPI/WebGL UI alongside them. Tunable values live in [`leafscan/config.yaml`](leafscan/config.yaml). The detailed derivation and design rationale live in [`scanner_photometric_stereo_spec.md`](scanner_photometric_stereo_spec.md).
 
 ---
 
