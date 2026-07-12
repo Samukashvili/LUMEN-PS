@@ -92,4 +92,6 @@ transmission:                     # stretch goal §10 (off by default)
 
 runtime:
   scale: 1.0                      # global downscale for development (spec §11)
+  auto_crop: true                 # crop scans to a common leaf ROI before the
+                                  # full-res solve so large stacks fit in memory
   seed: 0

@@ -1,0 +1,2692 @@
+╭─── Claude Code v2.1.207 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                Welcome back GIORGI!                │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ What's new              │
+│                        ▘▘ ▝▝                       │ Auto mode is now avail… │
+│ Opus 4.8 · Claude Pro · gsamukashvili0@gmail.com's │ Fixed the terminal fre… │
+│ Organization                                       │ Fixed remote managed s… │
+│ E:\CodingProjects\LaserjetTextureScanner\leafscan… │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ▎ Extended: Fable 5 is included in your weekly limit
+ ▎ Through July 12, you can use up to 50% of your weekly usage limit on Fable 5. If you hit your limit, you can continue on Fable 5 with usage credits. Fable 5 draws down usage faster than Opus 4.8. Run /model and select Fable to use it. Learn more (https://support.claude.com/en/articles/15424964-claude-fable-5-promotional-access)
+
+❯ I want you to implement the following software plan whole at once. you can    
+  stop and ask me questions if any arise. the printer connected and live and    
+  you should be able to scan images. there is one grape leaf in the scanner     
+  area so expect that to show up in the images?                                 
+                                                                                
+  "E:\CodingProjects\LaserjetTextureScanner\scanner_photometric_stereo_spec.md" 
+
+● I'll start by reading the spec file to understand the full scope.
+
+  Read 1 file (ctrl+o to expand)
+
+● This is a comprehensive spec. Let me start by understanding the environment —
+  checking Python, dependencies, and whether I can reach the live scanner
+  (priority 0 in the spec).
+
+  Listed 1 directory (ctrl+o to expand)
+
+● Python 3.14.4 (very new), with numpy/scipy/pillow present. I need OpenCV,
+  tifffile, imageio, and full pywin32 for WIA capture. Let me install
+  dependencies and check WIA availability in parallel.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All dependencies installed (OpenCV 5.0, pywin32-312 for cp314). Now let me
+  verify the scanner is reachable via WIA.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The scanner is live and reachable — HP LaserJet Professional M1130 MFP Series,
+  WIA 2.0. Let me inspect its item properties to determine bit-depth and
+  resolution capabilities (spec priority 0).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Critical finding for priority 0: the WIA driver exposes Bits Per Pixel: [1, 8,
+  24] — no 16-bit. So this hardware caps at 8-bit sRGB (color profile confirms
+  sRGB). That locks the linearization path: capture 8-bit color, undo sRGB in
+  software. Resolution list includes 1200 dpi.
+
+  Let me check the gitignore, then build the full package.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Scanner is live and 8-bit-capped — that's the key capture fact. Now I'll build
+  the full pipeline. Let me set up task tracking and write the package.
+
+● Now let me build. Starting with the config and core math (Task 1).
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Wrote 82 lines to ..\..\..\config.yaml
+       1 # leafscan — configuration
+         ec §11).
+         s unless noted.
+       4 
+       6   device_name_hint: "M113"        # substring to pick the HP fla
+       7   dpi: 1200                       # native optical (spec §4.2b).
+       8   color: true                     # 24-bit RGB (keeps R-B subsur
+         face hint + colour albedo)
+         -left origin.
+          card inside this.
+     … +108 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\lights.py)
+  ⎿  Wrote 74 lines to ..\..\..\lights.py
+       1 """Light-direction bookkeeping — spec §6.3, THE critical step.
+       3 The lamp is fixed in *scanner* space. To align scan ``k`` to the
+          reference we
+       4 de-rotate its image by the card's physical rotation ``theta_k``;
+       5 rotates with the image, so in the aligned (subject) frame::
+       6 
+         e card
+       8     el_subject[k] = el                   # elevation NEVER chang
+         es (single cone)
+      10     L[k] = ( cos(el)*cos(az_k),
+     … +84 lines (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 1 line, removed 1 line
+      26    # Fitted by calibrate.py; these are seeds / fallbacks (spec §
+          7, §3.3).
+      27    az0_deg: 90.0                   # prior: light tilts along Y 
+          (travel) axis
+      28    el_deg: 30.0                    # MUST be calibrated, never t
+          rusted as-is
+      29 -  rotation_sign: -1               # az_subject[k] = az0 - sign*
+         -(-1)*theta_k ; see lights.py                                   
+      29 +  rotation_sign: 1                # direction of physical card 
+         +rotation; fiducials override. See lights.py                    
+      30    source: "seed"                  # overwritten to 'cardboard'/
+          'selfcal'/'config' at runtime
+      31  
+      32  align:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\solve.py)
+  ⎿  Wrote 124 lines to ..\..\..\solve.py
+       1 """Robust, vectorized photometric stereo — spec §8.
+       3 Lambertian model per pixel:  I_k = rho * (N . L_k),  k = 0..N-1.
+       4 Substitute g = rho * N (3 unknowns) => linear:  I = L g.
+       5 Solve per pixel by (weighted) least squares; rho = |g|, N = g/|g
+       6 
+       7 Outlier rejection (spec §8.3): drop the brightest sample to kill
+       8 speculars; optionally also the darkest to kill shadows. Never dr
+         op below
+       9 ``min_surviving`` samples.  Fully vectorized — no per-pixel Pyth
+      10 """
+     … +125 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\__init__.py)
+  ⎿  Wrote 5 lines to ..\..\..\__init__.py
+      1 """leafscan — scanner-based photometric stereo for leaf normal ma
+        ps.
+      2 
+      3 See ``scanner_photometric_stereo_spec.md`` for the full design.
+      4 """
+      5 __version__ = "0.1.0"
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\tests\test_lights.py)
+  ⎿  Wrote 41 lines to ..\..\..\..\tests\test_lights.py
+       1 """Spec §6.3 requires: four L[k] are unit vectors, share an iden
+         tical Z, ~90 apart."""
+       2 import numpy as np
+       4 
+       5 from leafscan.lights import light_directions, nominal_thetas, li
+         ght_direction
+       6 
+       7 
+       9     L = light_directions(90.0, 30.0, nominal_thetas())
+      10     norms = np.linalg.norm(L, axis=1)
+     … +34 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\tests\test_solve_synthetic.py)
+  ⎿  Wrote 90 lines to ..\..\..\..\tests\test_solve_synthetic.py
+       1 """Spec priority 1: render a known bump under 4 known cone light
+         s, solve, recover it.
+       3 Proves the math before any real scan. Uses *spatially varying* a
+         lbedo (veins),
+       4 because that is exactly what a 2-scan solver would turn into fak
+       5 """
+       6 import numpy as np
+       7 import pytest
+       9 from leafscan.lights import light_directions, nominal_thetas
+      10 from leafscan.solve import photometric_solve, rerender
+     … +95 lines (ctrl+o to expand)
+
+● Let me install pytest and run the core-math tests to prove the solver before
+  touching real data.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Two bugs to fix: the batched solve needs a trailing axis, and my azimuth-diff
+  test logic was wrong. Let me fix both.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\solve.py)
+  ⎿  Added 1 line, removed 1 line
+       96          A = np.einsum("nm,nij->mij", wp, LL) # (M, 3, 3)
+       97          b = np.einsum("nm,ni->mi", wp * Ip, L)  # (M, 3)
+       98          A = A + ridge_lambda * np.eye(3, dtype=A.dtype)[None]
+       99 -        g = np.linalg.solve(A, b)            # (M, 3)         
+       99 +        g = np.linalg.solve(A, b[..., None])[..., 0]  # (M, 3)
+      100  
+      101          rho = np.linalg.norm(g, axis=1)
+      102          good = rho > 1e-8
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\tests\test_lights.py)
+  ⎿  Added 2 lines, removed 2 lines
+      19  
+      20  def test_ninety_degrees_apart_in_azimuth():
+      21      L = light_directions(0.0, 20.0, nominal_thetas())
+      22 -    az = np.rad2deg(np.arctan2(L[:, 1], L[:, 0])) % 360.0      
+      23 -    diffs = np.diff(np.r_[az, az[0] + 360.0]) % 360.0          
+      22 +    az = np.sort(np.rad2deg(np.arctan2(L[:, 1], L[:, 0])) % 360
+         +.0)                                                            
+      23 +    diffs = np.diff(np.r_[az, az[0] + 360.0])                  
+      24      assert np.allclose(diffs, 90.0, atol=1e-9)
+      25  
+      26  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Core math proven — 9/9 tests pass. Task 1 done. Let me build the WIA capture
+  helper next so I can kick off a preview scan in the background while I write
+  the remaining modules.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\capture_wia.py)
+  ⎿  Wrote 226 lines to ..\..\..\capture_wia.py
+       1 """Optional Windows WIA capture helper for the HP LaserJet M113x
+       2 
+       3 The pipeline does NOT depend on this module (spec §4.2). Its con
+       4 produce lossless images on disk. This helper just makes that con
+       5 enforces the non-negotiable capture settings (auto-exposure off,
+          fixed
+       7 
+       8 VERIFIED on the connected unit: the HP WIA driver caps at 8-bit
+         s hardware, so
+          spec §5.1).
+     … +245 lines (ctrl+o to expand)
+
+● Now let me kick off a preview scan of the leaf in the background to confirm
+  capture works and see what's on the glass.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● While the preview scans, let me build io.py (Task 2).
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\io.py)
+  ⎿  Wrote 150 lines to ..\..\..\io.py
+      1 """Load, linearize, dark/flat-field — spec §5.
+      2 
+      3 Everything internal is float32, linear, [0, 1]. Scanner output is
+      4 this hardware (verified), so we undo the sRGB transfer function t
+        o recover
+      5 intensity-proportional-to-light, which photometric stereo require
+        s.
+      6 """
+      8 
+      9 from pathlib import Path
+     … +160 lines (ctrl+o to expand)
+
+● Background command "Run 150 dpi preview scan of the leaf" completed (exit code
+0)
+
+● The preview scan completed. Let me look at what's on the glass.
+
+  Read 1 file (ctrl+o to expand)
+
+● Capture works (8-bit color confirmed). Let me view the preview to see the leaf
+  on the glass.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● That's the grape leaf on white — well-contrasted (easy Otsu masking) but no 
+  fiducial card present, so the pipeline will use the fiducial-less fallback:
+  nominal 90° de-rotation about the leaf centroid + ECC refinement on a
+  lighting-invariant proxy. Task 2 done; building align.py (Task 3) now.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\align.py)
+  ⎿  Wrote 277 lines to ..\..\..\align.py
+       1 """Alignment pipeline — spec §6. Order matters; this has the mos
+       2 
+       3   1. segment the leaf (masking, §6.5)
+       4   2. rigid align scan k -> scan 0 (fiducials if present, else no
+       5      on a *lighting-invariant* proxy, §6.2)
+       6   3. non-rigid warp on a lighting-invariant proxy, applied to th
+       7      (§6.4) — NEVER optical flow on the raw differently-lit imag
+         es
+       8   4. validity / mask-agreement (§6.5)
+      10 from __future__ import annotations
+     … +342 lines (ctrl+o to expand)
+
+● Now Task 4 — calibrate, integrate, outputs, qa.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\integrate.py)
+  ⎿  Wrote 55 lines to ..\..\..\integrate.py
+      1 """Normal-field -> height integration via Frankot-Chellappa (spec
+         §9.1).
+      2 
+        oise. Only
+      4 scipy.fft needed. Expect low-frequency doming — optionally high-p
+        ass the result.
+      5 """
+      6 from __future__ import annotations
+      8 import numpy as np
+      9 from scipy import fft
+     … +50 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\outputs.py)
+  ⎿  Wrote 76 lines to ..\..\..\outputs.py
+       1 """Encoding & export — spec §9.3. Tangent-space normal maps + al
+         bedo + height."""
+       2 from __future__ import annotations
+       3 
+       4 from pathlib import Path
+       6 import numpy as np
+       7 
+       8 from .io import linear_to_srgb
+       9 
+      10 __all__ = ["encode_normal", "save_png", "write_outputs"]
+     … +76 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\qa.py)
+  ⎿  Wrote 101 lines to ..\..\..\qa.py
+       1 """QA outputs — spec §8.4 (re-render residual is the MAIN diagno
+         stic) + §6.5."""
+       2 from __future__ import annotations
+       3 
+       4 from pathlib import Path
+       6 import numpy as np
+       7 
+       8 from .solve import rerender
+       9 
+      10 __all__ = ["write_qa", "colorize", "residual_report"]
+     … +107 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\calibrate.py)
+  ⎿  Wrote 142 lines to ..\..\..\calibrate.py
+       1 """Light calibration — fit (az0, el). Spec §7.
+       3 `el` (elevation) MUST be fitted, never hardcoded (§13). Getting 
+         it wrong doesn't
+         Two methods:
+       5 
+         oss ridges of
+       7      known profile is a direct function of `el`; the 0deg-vs-90d
+       8   B. self-calibration (fallback): treat (az0, el) as globals and
+          minimize the
+      10 """
+     … +162 lines (ctrl+o to expand)
+
+● Now the CLI orchestrator (Task 5) that glues the whole pipeline together.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Wrote 317 lines to ..\..\..\cli.py
+       1 """leafscan CLI — orchestrates the full pipeline (spec §11, §12)
+         .
+       3     python -m leafscan.cli run   --scans scans/leaf --out out
+       4     python -m leafscan.cli capture --out scans/leaf/k0.png --dpi
+          600 --color
+       6 
+       7 The pipeline consumes a folder of lossless images; it does not d
+         epend on the
+       9 """
+      10 from __future__ import annotations
+     … +362 lines (ctrl+o to expand)
+● Let me write an end-to-end synthetic integration test to shake out glue bugs
+  before spending the user's time on physical rotations.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\tests\test_pipeline_synthetic.p
+       y)
+  ⎿  Wrote 77 lines to ..\..\..\..\tests\test_pipeline_synthetic.py
+      1 """End-to-end integration test on synthetic *rotated* scans.
+      2 
+        ically rotated
+      4 k*90deg on the glass. Renders 4 sRGB PNGs, runs the whole pipelin
+        e, and checks
+        is exercises
+      6 load/linearize/flat/mask/rigid/nonrigid/solve/integrate/outputs/q
+        a together.
+      8 import numpy as np
+      9 from PIL import Image
+     … +80 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Two bugs: flat-field broadcast for RGB, and the black-level estimate is wrong
+  when the flat has no unlit border (spec says accept 0 then). Let me fix both.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\io.py)
+  ⎿  Added 2 lines
+      133          import cv2
+      134          k = int(max(3, round(blur_sigma * 4) | 1))
+      135          flat = cv2.GaussianBlur(flat, (k, k), blur_sigma)
+      136 +    if img.ndim == 3 and flat.ndim == 2:                      
+      137 +        flat = flat[..., None]  # broadcast illumination profi
+          +le across channels                                            
+      138  
+      139      denom = flat - dark
+      140      denom = np.where(np.abs(denom) < 1e-4, 1e-4, denom)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 4 lines, removed 2 lines
+      18    bit_depth: 8                    # this hardware caps at 8-bit
+          ; 16 is padded if it ever appears
+      19    # Rec.709 linear-luminance weights used for the photometric c
+          hannel.
+      20    luma_weights: [0.2126, 0.7152, 0.0722]
+      21 -  black_level: null               # null => estimate from flat-
+         -field's darkest percentile                                     
+      22 -  black_percentile: 1.0           # percentile of flat-field us
+         -ed as black level when estimating                              
+      21 +  black_level: 0.0                # sensor black offset. 0 is f
+         +ine unless a real dark                                         
+      22 +                                  # scan exists (spec §4.3.2). 
+         +Set null to estimate                                           
+      23 +                                  # from a flat-field that has 
+         +a genuine unlit border.                                        
+      24 +  black_percentile: 1.0           # percentile used only when b
+         +lack_level is null                                             
+      25    flat_field_blur_sigma: 0.0      # optional gaussian on flat-f
+          ield before dividing (0 = off)
+      26  
+      27  light:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\align.py)
+  ⎿  Added 4 lines, removed 2 lines
+      130          method = f"nominal({-angle:.0f})"
+      131  
+      132          if rcfg.get("ecc_refine", True) and ref_mask is not No
+           ne and mov_mask is not None:
+      133 -            M = _ecc_refine_on_dt(ref_mask, mov_mask, M) or M 
+      134 -            method += "+ecc"                                  
+      133 +            refined = _ecc_refine_on_dt(ref_mask, mov_mask, M)
+      134 +            if refined is not None:                           
+      135 +                M = refined                                   
+      136 +                method += "+ecc"                              
+      137  
+      138      theta = float(np.rad2deg(np.arctan2(M[1, 0], M[0, 0])))
+      139      interp = cv2.INTER_LANCZOS4 if cfg.get("rigid", {}).get(
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The 16-bit RGB PNG path (imageio→PIL) can't handle 16-bit color. Let me switch
+  save_png to OpenCV, which writes 16-bit multichannel PNGs reliably.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\outputs.py)
+  ⎿  Added 7 lines, removed 11 lines
+      25  
+      26  
+      27  def save_png(path, img01, bits=8):
+      28 -    """Save a [0,1] float image as an 8- or 16-bit PNG."""     
+      29 -    from PIL import Image                                      
+      28 +    """Save a [0,1] float image as an 8- or 16-bit PNG (OpenCV 
+         +backend).                                                      
+      29 +                                                               
+      30 +    OpenCV reliably writes 16-bit multi-channel PNGs (Pillow/im
+         +ageio do not).                                                 
+      31 +    """                                                        
+      32 +    import cv2                                                 
+      33      path = Path(path)
+      34      path.parent.mkdir(parents=True, exist_ok=True)
+      35      arr = _to_uint(img01, bits)
+      36      if arr.ndim == 3 and arr.shape[-1] == 3:
+      34 -        if bits > 8:                                           
+      35 -            # Pillow needs I;16 per-channel; use imageio for 16
+         --bit RGB                                                       
+      36 -            import imageio.v3 as iio                           
+      37 -            iio.imwrite(str(path), arr)                        
+      38 -        else:                                                  
+      39 -            Image.fromarray(arr, "RGB").save(str(path))        
+      40 -    else:                                                      
+      41 -        mode = "I;16" if bits > 8 else "L"                     
+      42 -        Image.fromarray(arr, mode).save(str(path))             
+      37 +        arr = arr[..., ::-1]  # RGB -> BGR for cv2             
+      38 +    cv2.imwrite(str(path), arr)                                
+      39      return path
+      40  
+      41  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● End-to-end synthetic pipeline passes. Let me run the full suite.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All 10 tests green. Let me add requirements + README, then move to the real
+  capture.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\requirements.txt)
+  ⎿  Wrote 10 lines to ..\..\..\..\requirements.txt
+       1 # leafscan — scanner photometric stereo. Windows, Python 3.11+ (
+         tested on 3.14).
+       3 scipy>=1.11
+       4 opencv-contrib-python>=4.9   # needs optflow (DISOpticalFlow) + 
+         aruco
+       6 imageio>=2.34
+       7 pillow>=10.0
+       8 pyyaml>=6.0
+          (capture_wia.py)
+      10 pytest>=8.0                  # tests only
+     … +3 lines (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\README.md)
+  ⎿  Wrote 70 lines to ..\..\..\..\README.md
+      1 # leafscan — scanner-based photometric stereo for leaf normal map
+      2 
+      3 Reconstruct a tangent-space **normal map** (+ albedo + height) of
+      4 subject (grape leaf) using a **flatbed scanner** as a photometric
+        -stereo rig.
+        ne light
+      6 direction. Rotate the subject 90° between scans → four light dire
+      7 proper photometric solve. Full design: `scanner_photometric_stere
+        o_spec.md`.
+      9 ## Install
+     … +83 lines (ctrl+o to expand)
+
+● Software is complete and validated (10/10 tests, including a full end-to-end
+  run on synthetic rotated scans). Task 5 done. Now for the real capture — this
+  needs your physical involvement (rotating the leaf between scans), so let me
+  confirm a few things that change the protocol before we start.
+
+● User answered Claude's questions:
+  ⎿  · The method needs 4 scans, rotating the leaf 90° between each. Are you 
+     able to rotate it and tell me when each rotation is done? → Yes, I'll 
+     rotate it
+     · Light elevation must be calibrated, not guessed (spec §7). Do you have 
+     single-face corrugated cardboard (parallel ridges) to scan as a calibration
+     target? → We dont need that accurate of a scan for just textures, simple 
+     auto calibration would do.
+     · Resolution for the leaf scans? → 600 dpi (Recommended)
+
+● Got it — 4 rotated scans, self-calibration, 600 dpi. Let me capture k0 now
+  (the leaf is already on the glass). This is a full-area 600 dpi color scan, so
+  it'll take a minute or two.
+  Ran 1 shell command (ctrl+o to expand)
+
+● I'll wait for the k0 scan to finish before asking you to rotate.
+
+● The k0 capture is running in the background; I'll be notified when it finishes
+  and will show it to you before the first rotation. Standing by.
+
+✻ Sautéed for 20m 43s
+
+● Background command "Capture k0 at 600 dpi color" completed (exit code 0)
+
+  Listed 1 directory (ctrl+o to expand)
+
+● k0 captured cleanly (7013×5100, 8-bit color). Here's a preview:
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● That's a great photometric subject — strong vein network and surface
+  puckering, well-isolated on white. k0 is done.
+
+  Now please rotate the leaf 90° (a quarter turn) on the glass for k1:
+  - Turn it in a consistent direction (e.g. clockwise) — we'll do the same each
+  time.
+  - Same face up — don't flip it over.
+  - Rotate it roughly about its own center so it stays in about the same spot on
+  the glass (keeps it in frame and makes alignment easier).
+  - Press it flat under the lid again.
+
+  Tell me when it's rotated and the lid is closed, and I'll scan k1.
+
+✻ Brewed for 48s
+
+❯ rotated                                                                       
+
+● Scanning k1.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● k1 scanning (takes a minute or two). I'll show it and ask for the next
+  rotation when it completes.
+
+✻ Baked for 21s
+
+● Background command "Capture k1 at 600 dpi color" completed (exit code 0)
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● k1 looks right — the leaf turned ~90° (the petiole/midrib that pointed left in
+  k0 now points down). Good, and it stayed centered.
+
+  Please rotate another 90° in the same direction for k2 (same face up, flat
+  under the lid). Tell me when it's done.
+
+✻ Cooked for 37s
+
+❯ rotated.                                                                      
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● k2 scanning. I'll show it and ask for the final rotation when done.
+
+✻ Crunched for 18s
+
+● Background command "Capture k2 at 600 dpi color" completed (exit code 0)
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● k2 is 180° from k0 (petiole now points right) — consistent rotation, still
+  centered.
+
+  One last 90° turn in the same direction for k3 (the final scan). Tell me when
+  done.
+
+✻ Brewed for 27s
+
+❯ rotated.                                                                      
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● k3 scanning — the final scan. When it's done I'll run the full pipeline
+  end-to-end and show you the results.
+
+✻ Baked for 19s
+
+● Background command "Capture k3 at 600 dpi color" completed (exit code 0)
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+● All four scans captured — the petiole steps left→down→right→up, clean 90°
+  clockwise increments.
+
+  Now the full pipeline. I'll do a fast validation pass at --scale 0.25 first to
+  check alignment, calibration, and QA residuals before committing to the
+  full-resolution solve.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The scan finder grabbed the thumbnail files. Let me exclude those and clean
+  up.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 3 lines, removed 2 lines
+      41      p = Path(scan_arg)
+      42      if p.is_dir():
+      43          exts = (".tif", ".tiff", ".png")
+      44 +        skip = ("flat", "calib", "thumb", "preview", "small", "
+         +trans")                                                        
+      45          files = sorted([f for f in p.iterdir()
+      45 -                        if f.suffix.lower() in exts and "flat" 
+         -not in f.stem.lower()                                          
+      46 -                        and "calib" not in f.stem.lower()])    
+      46 +                        if f.suffix.lower() in exts            
+      47 +                        and not any(s in f.stem.lower() for s i
+         +n skip)])                                                      
+      48          if len(files) < n:
+      49              raise SystemExit(f"Need {n} scans in {p}, found {le
+          n(files)}: {files}")
+      50          return files[:n]
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● End-to-end run works on the real leaf. But two things to fix before trusting
+  it:
+
+  1. Self-calibration is using the wrong samples. With drop_brightest, each
+  pixel has exactly 3 samples for 3 unknowns → the solve fits them perfectly
+  regardless of the light, so the residual only reflects the dropped (specular)
+  sample. Calibration should use all 4 samples (overdetermined) so the residual
+  actually constrains the light. The fitted az0=311° disagreeing with the
+  physical prior (light along the travel axis, ~90°/270°) is a symptom of this.
+  2. scan3 needed a 101px non-rigid warp (clamped) and has ~4× the residual —
+  the leaf settled differently on that rotation. I'll inspect the QA map after
+  fixing calibration.
+
+  Let me fix the calibration to use all samples.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 7 lines, removed 3 lines
+      244          log(f"[calib] using config az0={lc['az0_deg']} el={lc[
+           'el_deg']}")
+      245          return lc["az0_deg"], lc["el_deg"], "config"
+      246  
+      247 -    # Method B — self-cal on a downscaled copy for speed      
+      248 -    log("[calib] self-calibrating (Method B) on downscaled sta
+          -ck...")                                                       
+      247 +    # Method B — self-cal on a downscaled copy for speed.     
+      248 +    # Force rejection='none': with 4 samples and 3 unknowns th
+          +e fit is                                                      
+      249 +    # overdetermined, so the residual genuinely constrains (az
+          +0, el). Under                                                 
+      250 +    # drop_brightest the per-pixel solve is exactly determined
+          + and the residual                                             
+      251 +    # would instead be dominated by the (specular) dropped sam
+          +ple.                                                          
+      252 +    log("[calib] self-calibrating (Method B, all-samples) on d
+          +ownscaled stack...")                                          
+      253      ds = _downscale_stack(I_stack, 0.25)
+      254      dv = _downscale_stack(valid_stack.astype(np.float32), 0.25
+           ) > 0.5
+      255      az0, el, r, info = calib.self_calibrate(
+      256          ds, thetas, valid_stack=dv, az0_seed=lc["az0_deg"], el
+           _seed=lc["el_deg"],
+      253 -        rejection=cfg["solve"]["rejection"], min_surviving=cfg
+          -["solve"]["min_surviving"])                                   
+      257 +        rejection="none", min_surviving=cfg["solve"]["min_surv
+          +iving"])                                                      
+      258      return az0, el, f"selfcal(res={r:.4f})"
+      259  
+      260  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now az0=89.9° — landing exactly on the physical prior (light tilted along the
+  Y/travel axis), which is strong confirmation the light model is right. el=63°.
+  Let me inspect the QA outputs, especially scan3's elevated residual, and the
+  normal map.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● This is a genuinely good result. Reading the QA montage (spec §8.4
+  diagnostics):
+
+  - Normal map (top-left): real vein network, midrib, and surface puckering all
+  resolved — this is a legitimate photometric normal map, not pigment-tracking.
+  - Mask agreement (top-mid): solid — all 4 samples valid across 99.7% of the
+  leaf.
+  - Residuals scan0–2 (top-right, bottom-left, bottom-mid): low and noise-like
+  with faint vein structure (glossy veins → mild speculars, which drop_brightest
+  handles). Trustworthy.
+  - Residual scan3 (bottom-right): a bright crescent along the top edge — per
+  the spec, a residual correlated with the outline means non-rigid registration 
+  under-corrected there. It matches the 101px displacement that got clamped at
+  60px. The leaf's top margin settled differently on that rotation.
+
+  Let me raise the non-rigid warp clamp so scan3's edge can fully register, then
+  re-check.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 2 lines, removed 1 line
+      47      method: "dis"                 # 'dis' (DISOpticalFlow) | 'f
+          arneback'
+      48      vein_highpass_sigma: 6.0
+      49      flow_smooth_sigma: 2.0        # post-smooth the flow field
+      50 -    max_warp_px: 60               # sanity clamp; warps beyond 
+         -this are suspect                                               
+      50 +    max_warp_px: 160              # sanity clamp; thin leaves c
+         +an settle mm-scale                                             
+      51 +                                  # differently between rotatio
+         +ns (spec §6.4)                                                 
+      52    mask:
+      53      otsu: true
+      54      close_radius: 5
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● All four residuals are now balanced at ~0.008 (scan3 fell from 0.035 → 0.008).
+  Calibration residual also improved and az0/el stayed near the travel-axis
+  prior. The solve is now uniformly trustworthy.
+
+  Let me check available memory before the full 600 dpi run (the float stacks
+  are large).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Only 3.3 GB free — a full 600 dpi run (float stacks ~6–7 GB peak) would OOM.
+  To keep the full 600 dpi detail on the leaf while fitting in memory, I'll crop
+  all four scans to a common ROI (in scanner coordinates) that contains the
+  leaf in every rotation, then run at scale 1.0. Let me compute that ROI from
+  the leaf masks.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● ROI is 3116×3284 (~10 MP) — fits comfortably. Let me crop all four full-res
+  scans to this common box and run the full-detail pipeline.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● The full-detail run is processing (self-calibration + solve on the 10 MP stack
+  takes a bit). I'll report when it completes.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Waiting on the full run. I'll show the final outputs once it's done.
+
+  Read 1 file (ctrl+o to expand)
+
+● Background command "Run full-detail pipeline on cropped ROI" completed (exit
+code 0)
+
+● Background command "Wait for full run to finish" completed (exit code 0)
+
+● At full resolution the non-rigid displacements are ~400px (scan3) — they scale
+  with resolution, so the 160px clamp is now far too small, and, more
+  importantly, DIS optical flow can't reliably find 400px displacements at full
+  res. That re-broke scan3 and biased the self-calibration (az0 drifted to
+  145°).
+
+  The right fix: compute the flow on a downscaled proxy (where displacement is
+  ~100px, well within DIS's range), then upscale the flow field and apply it to
+  the full-res original. This is resolution-independent and faster. Let me
+  implement it.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\align.py)  ⎿  Added 19 lines, removed 3 lines
+      205  def nonrigid_warp(ref_luma, ref_mask, mov_luma, mov_mask, mov_
+           extra, cfg):
+      206      """Compute dense flow ref->mov on the proxy; remap ORIGINA
+           L mov onto ref.
+      207  
+      208 +    The flow is computed on a DOWNSCALED proxy (spec §6.4): th
+          +in leaves deform by                                           
+      209 +    hundreds of pixels at 600 dpi, which is beyond DIS/Farneba
+          +ck's search range at                                          
+      210 +    full res. Estimating on a small copy keeps displacements t
+          +ractable, then the                                            
+      211 +    flow is upscaled (magnitudes scaled with it) and applied t
+          +o the full-detail                                             
+      212 +    original. Resolution-independent and faster.              
+      213 +                                                              
+      214      Returns (warped_luma, warped_extra, flow, max_disp_px).
+      215      """
+      216      ncfg = cfg
+      217 +    H, W = ref_luma.shape                                     
+      218      ref_proxy = build_proxy(ref_luma, ref_mask, ncfg)
+      219      mov_proxy = build_proxy(mov_luma, mov_mask, ncfg)
+      213 -    flow = _dis_flow(ref_proxy, mov_proxy, ncfg.get("method", 
+          -"dis"))                                                       
+      220  
+      221 +    ds = float(ncfg.get("flow_downscale", 0.25))              
+      222 +    ds = min(1.0, max(0.05, ds))                              
+      223 +    if ds < 0.999:                                            
+      224 +        sw, sh = max(1, int(W * ds)), max(1, int(H * ds))     
+      225 +        rp = cv2.resize(ref_proxy, (sw, sh), interpolation=cv2
+          +.INTER_AREA)                                                  
+      226 +        mp = cv2.resize(mov_proxy, (sw, sh), interpolation=cv2
+          +.INTER_AREA)                                                  
+      227 +        flow_s = _dis_flow(rp, mp, ncfg.get("method", "dis")) 
+      228 +        flow = cv2.resize(flow_s, (W, H), interpolation=cv2.IN
+          +TER_LINEAR) / ds                                              
+      229 +    else:                                                     
+      230 +        flow = _dis_flow(ref_proxy, mov_proxy, ncfg.get("metho
+          +d", "dis"))                                                   
+      231 +                                                              
+      232      smooth = float(ncfg.get("flow_smooth_sigma", 2.0))
+      233      if smooth > 0:
+      234          flow = cv2.GaussianBlur(flow, (0, 0), smooth)
+      235  
+      219 -    # sanity clamp                                            
+      236 +    # sanity clamp (full-res pixels)                          
+      237      maxw = float(ncfg.get("max_warp_px", 60))
+      238      mag = np.linalg.norm(flow, axis=-1)
+      239      max_disp = float(mag.max()) if mag.size else 0.0
+      240      flow = np.clip(flow, -maxw, maxw)
+      241  
+      225 -    H, W = ref_luma.shape                                     
+      242      gx, gy = np.meshgrid(np.arange(W, dtype=np.float32), np.ar
+           ange(H, dtype=np.float32))
+      243      map_x = gx + flow[..., 0]
+      244      map_y = gy + flow[..., 1]
+
+  Read 1 file (ctrl+o to expand)
+
+● Now update the config: add flow_downscale and a resolution-appropriate clamp.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 3 lines, removed 2 lines
+      46      proxy: "mask_dt+veins"        # 'mask_dt' | 'veins' | 'mask
+          _dt+veins'
+      47      method: "dis"                 # 'dis' (DISOpticalFlow) | 'f
+          arneback'
+      48      vein_highpass_sigma: 6.0
+      49 +    flow_downscale: 0.25          # estimate flow on a small co
+         +py (DIS can't find                                             
+      50 +                                  # the hundreds-of-px leaf def
+         +ormation at 600 dpi)                                           
+      51      flow_smooth_sigma: 2.0        # post-smooth the flow field
+      50 -    max_warp_px: 160              # sanity clamp; thin leaves c
+         -an settle mm-scale                                             
+      51 -                                  # differently between rotatio
+         -ns (spec §6.4)                                                 
+      52 +    max_warp_px: 600              # sanity clamp in full-res px
+         + (spec §6.4)                                                   
+      53    mask:
+      54      otsu: true
+      55      close_radius: 5
+
+● Let me re-run the full-detail pipeline with the multiscale flow fix.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I'll report once the run finishes.
+
+  Read 1 file (ctrl+o to expand)
+
+● Still processing. I'll wait for the completion notification.
+
+  Read 1 file (ctrl+o to expand)
+
+● The run is still going; I'll respond when the waiter notifies me it's
+  complete.
+
+✻ Worked for 12m 0s
+
+● Background command "Re-run full pipeline with multiscale flow" completed (exit
+code 0)
+
+  Read 1 file (ctrl+o to expand)
+
+● Background command "Wait for full run to finish" completed (exit code 0)
+
+● Full-resolution run is now clean: residuals balanced at [0.011, 0.011, 0.012, 
+  0.011] — scan3's edge artifact is gone (multiscale flow handled its 404px
+  deformation). az0=118°, el=54°; the azimuth wobbles ±30° around the 90° prior
+  across runs, which is the expected softness of self-calibration on a leaf
+  (spec §7 warns Method B is weakly identified in azimuth), but the residuals
+  stay low and balanced so the normals are self-consistent.
+
+  Let me view the final outputs.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● This is an excellent result. Reading the panels:
+
+  - Normal map (top-left): the full venation — midrib, lateral veins, fine
+  reticulation — plus surface puckering, all cleanly resolved as real geometry.
+  - Albedo (top-mid): lighting-free green base color; shading and highlights
+  removed, petiole visible.
+  - Height (top-right): FC-integrated relief (darkest = the deepest top-left
+  lobe).
+  - Residuals scan0 & scan3 (bottom-left/mid): both low and noise-like with only
+  faint vein texture (mild vein gloss) — and scan3's outline crescent is gone.
+  - Mask agreement (bottom-right): solid — 4/4 samples across essentially the
+  whole leaf.
+
+  Let me zoom into the normal map to confirm full-res vein detail.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● The zoom confirms it: crisp midrib, branching lateral veins, and fine
+  intervein reticulation/puckering — all captured as genuine surface normals
+  (the pink/cyan tints are real X/Y slope flanking each vein). This is a
+  high-quality tangent-space normal map at full 600 dpi detail.
+
+  Let me run the test suite once more (the align.py multiscale change), and tidy
+  up git ignores for the large binaries.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\.gitignore)
+  ⎿  Added 11 lines
+       1  scanner_photometric_stereo_spec.md
+       2 +                                                               
+       3 +# Python                                                       
+       4 +__pycache__/                                                   
+       5 +*.pyc                                                          
+       6 +.pytest_cache/                                                 
+       7 +                                                               
+       8 +# Large capture data & pipeline outputs (regenerate via the CLI
+         +)                                                              
+       9 +scans/                                                         
+      10 +out/                                                           
+      11 +out_quarter/                                                   
+      12 +*.bmp                                                          
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Done — the whole spec is implemented, tested, and run end-to-end on your live
+  grape leaf.
+
+  What was built
+
+  leafscan/ — a config-driven pipeline (every magic number in config.yaml),
+  matching the spec module-for-module:
+  - lights.py — light-vector bookkeeping (the critical §6.3 step) + unit tests
+  - solve.py — vectorized robust photometric stereo, drop_brightest outlier
+  rejection
+  - io.py — sRGB linearization, dark/flat-field, luminance + R−B subsurface hint
+  - align.py — masking, rigid align (fiducials or nominal-90°+ECC fallback),
+  multiscale non-rigid flow on a lighting-invariant proxy, mask-agreement
+  - calibrate.py — self-cal (Method B) + corrugated-card (Method A)
+  - integrate.py (Frankot–Chellappa), outputs.py (GL/DX 16-bit), qa.py
+  (re-render residuals), cli.py, capture_wia.py
+  - tests/ — 10 passing: light-vector invariants, synthetic bump recovery,
+  specular rejection, and a full end-to-end run on synthetic rotated scans.
+
+  Hardware facts I verified (spec priority 0)
+
+  - Scanner is live: HP LaserJet M1130/M1132, WIA 2.0.
+  - The WIA driver caps at 8-bit (BitsPerPixel ∈ {1,8,24}) — no 16-bit path on
+  this hardware. So I capture 24-bit sRGB and linearize in software, exactly as
+  the spec's fallback anticipated.
+
+  The real run
+
+  I captured 4 scans at 600 dpi (you rotated 90° between each — clean
+  left→down→right→up steps), then ran the full pipeline. No fiducial card, so it
+  used the nominal-rotation + ECC fallback; no corrugated card, so it
+  self-calibrated. Final QA:
+  - Light: az0≈118°, el≈54° — azimuth lands near the travel-axis prior (~90°),
+  confirming the light model.
+  - Residuals: [0.011, 0.011, 0.012, 0.011] — low, balanced, noise-like across
+  all four scans → trustworthy solve.
+  - Two issues I caught and fixed via the QA residual maps (as the spec
+  intends): self-cal was fitting the wrong (specular) samples → switched
+  calibration to all-4-samples; and scan3's ~400px leaf deformation broke DIS
+  flow at full res → made the flow multiscale.
+
+  Deliverables (out/, 3116×3284)
+
+  normal_gl.png, normal_dx.png (16-bit), albedo.png (linear) + albedo_srgb.png,
+  height.png, and qa/ (per-scan residuals, mask agreement, light-vector dump in
+  report.txt). The normal map resolves the full venation and surface puckering
+  as real geometry.
+
+  Two notes: memory was tight (3.3 GB free), so a full-glass 600 dpi float run
+  would OOM — I cropped all four scans to a common ROI around the leaf to keep
+  full detail within budget (documented approach; use --scale 0.5 as the
+  alternative). And self-calibration on a leaf is azimuth-soft (±~30°
+  run-to-run, per spec §7) — fine for textures; scan corrugated cardboard and
+  pass --calib if you ever want it pinned down.
+
+  Re-run anytime: python -m leafscan.cli run --scans scans/leaf_crop --out out.
+  I did not commit anything (large binaries are gitignored) — say the word if
+  you'd like a commit.
+
+✻ Churned for 3m 41s
+❯ ok, the results are looking FANTASTIC. just few adjustments needed to make it 
+  better.                                                                       
+                                                                                
+  N1. the edge morphing feature we have to make the leaves aligned cause like a 
+  "stretching" effect, simmilar to you know when you are baking uv maps and     
+  you use padding?                                                              
+                                                                                
+  N2. The background removal tool leaves like a white highlight/edge around the 
+  leaf, this might also be related to the issue N1 because this white           
+  highlight usually has that pixel stretching effect when you zoom in.          
+
+● Both are the same root cause, and it's a well-known one — you nailed the
+  UV-padding analogy. Here's what's happening:
+
+  - The leaf boundary is a ring of mixed leaf+white-background pixels. The Otsu
+  mask includes some of them, so the albedo shows a bright rim (N2).
+  - The non-rigid remap uses linear interpolation, so right at that boundary it
+  samples across the leaf-to-white edge and smears the white background inward —
+  exactly the stretched-pixel look you get from bad UV padding (N1).
+
+  The clean fix is the same thing you'd do for UV maps done right: trim the 
+  contaminated boundary ring, then re-pad outward with clean interior data
+  (nearest-valid dilation) instead of leaving the stretched white edge. Let me
+  add that as a proper post-process step.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now let me look at the current cleanup section to modify it:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 27 lines, removed 4 lines
+      187          nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
+      188          normal = normal / np.clip(nrm, 1e-8, None)
+      189  
+      190 -    normal = _fill_invalid(normal, valid, ref_mask)           
+      191 -    albedo_rgb = _fill_invalid(albedo_rgb, valid, ref_mask)   
+      190 +    # Edge trim + clean padding (fixes background-bleed halo a
+          +nd warp-stretch at                                            
+      191 +    # the boundary — same idea as UV padding). The leaf/backgr
+          +ound boundary is a                                            
+      192 +    # ring of mixed leaf+white pixels, and the warp's bilinear
+          + remap smears white                                           
+      193 +    # inward there. So: keep only the clean interior (erode), 
+          +then re-pad outward                                           
+      194 +    # from that interior (nearest-valid) instead of leaving th
+          +e stretched rim.                                              
+      195 +    import cv2                                                
+      196 +    ecfg = ocfg.get("edge", {})                               
+      197 +    trim_px = int(ecfg.get("trim_px", 6))                     
+      198 +    pad_px = int(ecfg.get("pad_px", 24))                      
+      199 +    solved = ref_mask & valid                                 
+      200 +    core = solved                                             
+      201 +    if trim_px > 0:                                           
+      202 +        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trim
+          +_px * 2 + 1,) * 2)                                            
+      203 +        core = cv2.erode(solved.astype(np.uint8), k).astype(bo
+          +ol)                                                           
+      204 +    pad_region = ref_mask                                     
+      205 +    if pad_px > 0:                                            
+      206 +        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pad_
+          +px * 2 + 1,) * 2)                                             
+      207 +        pad_region = cv2.dilate(ref_mask.astype(np.uint8), k).
+          +astype(bool)                                                  
+      208 +                                                              
+      209 +    normal = _fill_invalid(normal, core, pad_region)          
+      210 +    albedo_rgb = _fill_invalid(albedo_rgb, core, pad_region)  
+      211      nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
+      212      normal = np.where(nrm > 1e-8, normal / np.clip(nrm, 1e-8, 
+           None), normal)
+      194 -    out_valid = ref_mask  # solved+filled over the whole leaf 
+      213 +    out_valid = pad_region        # encode the padded region (
+          +clean interior + padding)                                     
+      214 +    qa_valid = solved             # evaluate residual only whe
+          +re we truly solved                                            
+      215 +    log(f"[edge] trim={trim_px}px pad={pad_px}px  core={int(co
+          +re.sum())}px "                                                
+      216 +        f"padded={int(out_valid.sum())}px")                   
+      217  
+      218      # ---- 10. height integration (§9.1) ----
+      219      height = None
+      220      if cfg["integrate"]["enabled"]:
+      221 +        # integrate over the clean core so padded pixels don't
+          + inject fake slopes                                           
+      222          height = integrate.integrate_height(
+      200 -            normal, out_valid, cfg["integrate"]["highpass_sigm
+          -a"])                                                          
+      223 +            normal, core, cfg["integrate"]["highpass_sigma"]) 
+      224          log("[integrate] Frankot-Chellappa height computed")
+      225  
+      226      # ---- 11. outputs + QA ----
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 1 line, removed 1 line
+      233  
+      234      sub = io.subsurface_hint(rgb_stack[0])
+      235      stats = qa.write_qa(qa_dir, I_stack=I_stack, normal=normal
+           , albedo=albedo_scalar,
+      236 -                        L=L, valid=out_valid, nsamples=nsample
+          -s, thetas=thetas,                                             
+      236 +                        L=L, valid=qa_valid, nsamples=nsamples
+          +, thetas=thetas,                                              
+      237                          az0=az0, el=el, subsurface=sub, weight
+           s=out["weights"],
+      238                          extra_text=f"light_source={source}  fl
+           at={flat_src}")
+      239      log(f"[qa] residual means: {[round(s['mean'],4) for s in s
+           tats]}  -> {qa_dir}")
+
+● Now add the config edge section:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 3 lines
+      69  
+      70  output:
+      71    normal_bits: 16                 # 16-bit PNG normals to avoid
+           banding on low slopes
+      72 +  edge:                           # boundary cleanup (kills the
+         + white halo + warp stretch)                                    
+      73 +    trim_px: 6                    # erode the solved region to 
+         +drop the mixed leaf/bg ring                                    
+      74 +    pad_px: 24                    # re-pad outward from clean i
+         +nterior (texture padding)                                      
+      75    albedo_linear: true             # export linear albedo
+      76    albedo_srgb: true               # and an sRGB-encoded copy
+      77    smooth:
+
+● Let me re-run the full pipeline and inspect the leaf edge closely.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I'll compare the leaf edge before/after once the run finishes.
+
+  Read 1 file (ctrl+o to expand)
+
+● Still running; I'll wait for the completion notification.
+
+✻ Cogitated for 3m 27s
+
+❯ we dont want any padding ususally, because we will likely be placing these    
+  textures on a transparent plain pbject. but keep that option to be toggleable 
+  from the ui when we implement it.                                             
+                                                                                
+  also, implement the capability for outputing the alpha map as well.           
+
+● Makes sense — for a cutout on a transparent plane you want a hard leaf
+  silhouette with a real alpha map, not padding. Let me change the defaults so:
+  - No padding by default (pad_px: 0), but it stays a config toggle for the
+  future UI.
+  - The edge trim still runs so the leaf's visible boundary is filled from clean
+  interior (no white halo / stretch), while the alpha carries the full leaf
+  silhouette.
+  - Add an alpha map deliverable (plus a ready-to-use RGBA albedo).
+
+  Let me update outputs, config, and the CLI.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\outputs.py)
+  ⎿  Added 5 lines, removed 2 lines
+      27  def save_png(path, img01, bits=8):
+      28      """Save a [0,1] float image as an 8- or 16-bit PNG (OpenCV 
+          backend).
+      29  
+      30 -    OpenCV reliably writes 16-bit multi-channel PNGs (Pillow/im
+         -ageio do not).                                                 
+      30 +    Handles grayscale, RGB, and RGBA. OpenCV reliably writes 16
+         +-bit multi-channel                                             
+      31 +    PNGs (Pillow/imageio do not).                              
+      32      """
+      33      import cv2
+      34      path = Path(path)
+      35      path.parent.mkdir(parents=True, exist_ok=True)
+      36      arr = _to_uint(img01, bits)
+      37      if arr.ndim == 3 and arr.shape[-1] == 3:
+      37 -        arr = arr[..., ::-1]  # RGB -> BGR for cv2             
+      38 +        arr = arr[..., ::-1]                 # RGB -> BGR      
+      39 +    elif arr.ndim == 3 and arr.shape[-1] == 4:                 
+      40 +        arr = arr[..., [2, 1, 0, 3]]         # RGBA -> BGRA    
+      41      cv2.imwrite(str(path), arr)
+      42      return path
+      43  
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\outputs.py)
+  ⎿  Added 20 lines, removed 5 lines
+      42      return path
+      43  
+      44  
+      45 -def write_outputs(out_dir, normal, albedo_rgb, valid, height=No
+         -ne,                                                            
+      45 +def write_outputs(out_dir, normal, albedo_rgb, valid, height=No
+         +ne, alpha=None,                                                
+      46                    normal_bits=16, albedo_linear=True, albedo_sr
+          gb=True):
+      47 -    """Write the full deliverable set (spec §1, §9.3). Returns 
+         -list of paths."""                                              
+      47 +    """Write the full deliverable set (spec §1, §9.3). Returns 
+         +list of paths.                                                 
+      48 +                                                               
+      49 +    ``alpha`` (H,W) in [0,1] is the leaf opacity/silhouette. Wh
+         +en provided it is                                              
+      50 +    saved as ``alpha.png`` and baked into RGBA copies for direc
+         +t use on a                                                     
+      51 +    transparent plane.                                         
+      52 +    """                                                        
+      53      out = Path(out_dir)
+      54      out.mkdir(parents=True, exist_ok=True)
+      55      written = []
+     ...
+      62      written.append(save_png(out / "normal_gl.png", encode_norma
+          l(n, directx=False), normal_bits))
+      63      written.append(save_png(out / "normal_dx.png", encode_norma
+          l(n, directx=True), normal_bits))
+      64  
+      65 +    alb_lin = np.clip(albedo_rgb, 0, 1)                        
+      66 +    alb_srgb = linear_to_srgb(alb_lin)                         
+      67      if albedo_linear:
+      61 -        written.append(save_png(out / "albedo.png", np.clip(alb
+         -edo_rgb, 0, 1), 16))                                           
+      68 +        written.append(save_png(out / "albedo.png", alb_lin, 16
+         +))                                                             
+      69      if albedo_srgb:
+      63 -        written.append(save_png(out / "albedo_srgb.png",       
+      64 -                                linear_to_srgb(np.clip(albedo_r
+         -gb, 0, 1)), 8))                                                
+      70 +        written.append(save_png(out / "albedo_srgb.png", alb_sr
+         +gb, 8))                                                        
+      71  
+      72 +    if alpha is not None:                                      
+      73 +        a = np.clip(alpha, 0, 1).astype(np.float32)            
+      74 +        written.append(save_png(out / "alpha.png", a, 8))      
+      75 +        # RGBA convenience copies (premultiply not applied — st
+         +raight alpha)                                                  
+      76 +        written.append(save_png(out / "albedo_srgb_rgba.png",  
+      77 +                                np.dstack([alb_srgb, a]), 8))  
+      78 +        written.append(save_png(out / "normal_gl_rgba.png",    
+      79 +                                np.dstack([encode_normal(n, dir
+         +ectx=False), a]), 8))                                          
+      80 +                                                               
+      81      if height is not None:
+      82          h = height.copy()
+      83          m = valid
+
+● Background command "Wait for run to finish" completed (exit code 0)
+
+● Background command "Re-run full pipeline with edge trim+pad" completed (exit
+code 0)
+
+● The stale run finished but I'm reworking the logic. Let me update the config
+  and CLI now.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 8 lines, removed 2 lines
+      70  output:
+      71    normal_bits: 16                 # 16-bit PNG normals to avoid
+           banding on low slopes
+      72    edge:                           # boundary cleanup (kills the
+           white halo + warp stretch)
+      73 -    trim_px: 6                    # erode the solved region to 
+         -drop the mixed leaf/bg ring                                    
+      74 -    pad_px: 24                    # re-pad outward from clean i
+         -nterior (texture padding)                                      
+      73 +    trim_px: 6                    # erode the solved region to 
+         +drop the mixed leaf/bg ring;                                   
+      74 +                                  # the leaf boundary is then f
+         +illed from clean interior                                      
+      75 +    pad_px: 0                     # texture padding OUTSIDE the
+         + leaf silhouette. 0 = none                                     
+      76 +                                  # (for cutouts on a transpare
+         +nt plane). Raise for meshes                                    
+      77 +                                  # that need mip-bleed padding
+         + (future UI toggle).                                           
+      78 +  alpha:                                                       
+      79 +    enabled: true                 # export alpha.png (leaf opac
+         +ity) + RGBA convenience maps                                   
+      80 +    feather_px: 0.0               # soften the alpha edge (0 = 
+         +crisp silhouette)                                              
+      81    albedo_linear: true             # export linear albedo
+      82    albedo_srgb: true               # and an sRGB-encoded copy
+      83    smooth:
+
+● Now the CLI: fill the leaf ring from clean interior, keep the full silhouette
+  for alpha, and pass alpha through.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 21 lines, removed 8 lines
+      195      import cv2
+      196      ecfg = ocfg.get("edge", {})
+      197      trim_px = int(ecfg.get("trim_px", 6))
+      198 -    pad_px = int(ecfg.get("pad_px", 24))                      
+      198 +    pad_px = int(ecfg.get("pad_px", 0))                       
+      199      solved = ref_mask & valid
+      200 -    core = solved                                             
+      200 +    core = solved                                 # clean sour
+          +ce for filling                                                
+      201      if trim_px > 0:
+      202          k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trim
+           _px * 2 + 1,) * 2)
+      203          core = cv2.erode(solved.astype(np.uint8), k).astype(bo
+           ol)
+      204 -    pad_region = ref_mask                                     
+      204 +                                                              
+      205 +    # Fill the trimmed leaf boundary ring (and any interior ho
+          +les) from the clean                                           
+      206 +    # core, so the leaf's own edge shows interior-extended dat
+          +a, not white bleed.                                           
+      207 +    # pad_px optionally extends data BEYOND the silhouette for
+          + mesh mip-bleed.                                              
+      208 +    fill_region = ref_mask                                    
+      209      if pad_px > 0:
+      210          k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pad_
+           px * 2 + 1,) * 2)
+      207 -        pad_region = cv2.dilate(ref_mask.astype(np.uint8), k).
+          -astype(bool)                                                  
+      211 +        fill_region = cv2.dilate(ref_mask.astype(np.uint8), k)
+          +.astype(bool)                                                 
+      212  
+      209 -    normal = _fill_invalid(normal, core, pad_region)          
+      210 -    albedo_rgb = _fill_invalid(albedo_rgb, core, pad_region)  
+      213 +    normal = _fill_invalid(normal, core, fill_region)         
+      214 +    albedo_rgb = _fill_invalid(albedo_rgb, core, fill_region) 
+      215      nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
+      216      normal = np.where(nrm > 1e-8, normal / np.clip(nrm, 1e-8, 
+           None), normal)
+      213 -    out_valid = pad_region        # encode the padded region (
+          -clean interior + padding)                                     
+      217 +    out_valid = fill_region       # encode clean leaf (+ optio
+          +nal padding)                                                  
+      218      qa_valid = solved             # evaluate residual only whe
+           re we truly solved
+      219 +                                                              
+      220 +    # Alpha = the leaf silhouette (opacity for a transparent p
+          +lane), NOT padded.                                            
+      221 +    acfg = ocfg.get("alpha", {})                              
+      222 +    alpha = None                                              
+      223 +    if acfg.get("enabled", True):                             
+      224 +        alpha = ref_mask.astype(np.float32)                   
+      225 +        feather = float(acfg.get("feather_px", 0.0))          
+      226 +        if feather > 0:                                       
+      227 +            alpha = cv2.GaussianBlur(alpha, (0, 0), feather)  
+      228      log(f"[edge] trim={trim_px}px pad={pad_px}px  core={int(co
+           re.sum())}px "
+      216 -        f"padded={int(out_valid.sum())}px")                   
+      229 +        f"leaf={int(ref_mask.sum())}px  alpha={'on' if alpha i
+          +s not None else 'off'}")                                      
+      230  
+      231      # ---- 10. height integration (§9.1) ----
+      232      height = None
+
+● Now pass alpha into write_outputs:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)  ⎿  Added 1 line, removed 1 line
+      238  
+      239      # ---- 11. outputs + QA ----
+      240      written = outputs.write_outputs(
+      241 -        out_dir, normal, albedo_rgb, out_valid, height,       
+      241 +        out_dir, normal, albedo_rgb, out_valid, height, alpha=
+          +alpha,                                                        
+      242          normal_bits=ocfg["normal_bits"],
+      243          albedo_linear=ocfg["albedo_linear"], albedo_srgb=ocfg[
+           "albedo_srgb"])
+      244      for p in written:
+
+● Let me run the tests, then re-run the full pipeline.
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+● I'll show the edge close-up and the new alpha map once the run completes.
+
+  Read 1 file (ctrl+o to expand)
+
+● Still processing. I'll respond when the run finishes.
+
+✻ Brewed for 6m 14s
+
+● 2 background commands completed
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Residuals dropped further to ~0.009 (QA now measures only the truly-solved
+  interior), and the new deliverables are there: alpha.png,
+  albedo_srgb_rgba.png, normal_gl_rgba.png. Let me verify the edge is clean and
+  the alpha cutout works — compositing the RGBA over a checkerboard and zooming
+  the boundary.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● The edge is now clean — the leaf composites over transparency (checkerboard)
+  with no white halo and no stretched padding, the alpha follows the serrated
+  silhouette including the lobe tips, and the margin shows the leaf's natural
+  color instead of background bleed. Let me confirm the full cutout and alpha
+  map.
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Both adjustments are done and verified:
+
+  N1 (warp stretch) + N2 (white halo) — fixed. The boundary ring of mixed
+  leaf/background pixels is trimmed and the leaf edge is filled from clean
+  interior instead of smeared white. The composite over transparency shows a
+  crisp, halo-free edge.
+
+  Alpha map — added. New deliverables:
+  - alpha.png — the leaf silhouette/opacity
+  - albedo_srgb_rgba.png, normal_gl_rgba.png — RGBA copies ready to drop onto a
+  transparent plane
+
+  No padding by default (edge.pad_px: 0) since you're using transparent cutouts,
+  but it stayed a config toggle (with edge.trim_px and alpha.feather_px) for
+  the future UI. Let me sync the README so the new outputs and knobs are
+  documented.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\README.md)
+  ⎿  Added 14 lines, removed 3 lines
+      47  ```
+      48  
+      49  ### Outputs
+      50 -`out/normal_gl.png`, `out/normal_dx.png`, `out/albedo.png`, `ou
+         -t/albedo_srgb.png`,                                            
+      51 -`out/height.png`, and `out/qa/` (re-render residuals — the main
+         - QA signal —                                                   
+      52 -mask agreement, light-vector dump in `report.txt`).            
+      50 +`out/normal_gl.png`, `out/normal_dx.png` (16-bit), `out/albedo.
+         +png` (linear) +                                                
+      51 +`out/albedo_srgb.png`, `out/height.png`, `out/alpha.png` (leaf 
+         +silhouette), and                                               
+      52 +the RGBA convenience maps `out/albedo_srgb_rgba.png`, `out/norm
+         +al_gl_rgba.png`                                                
+      53 +(ready for a transparent plane). Plus `out/qa/` (re-render resi
+         +duals — the main                                               
+      54 +QA signal — mask agreement, light-vector dump in `report.txt`).
+      55  
+      56 +### Edge / alpha (config `output.edge` + `output.alpha`)       
+      57 +The leaf boundary is a ring of mixed leaf/white-background pixe
+         +ls, and the warp's                                             
+      58 +bilinear remap smears white inward there. `edge.trim_px` erodes
+         + that ring and the                                             
+      59 +leaf edge is re-filled from clean interior (kills the white hal
+         +o + stretch).                                                  
+      60 +`edge.pad_px` adds texture padding *outside* the silhouette for
+         + mip-bleed on                                                  
+      61 +meshes — **0 by default** (transparent cutouts don't want it; t
+         +oggle it up in a                                               
+      62 +UI later). `alpha.enabled` writes the opacity map; `alpha.feath
+         +er_px` softens its                                             
+      63 +edge (0 = crisp).                                              
+      64 +                                                               
+      65  ## Read the QA first (spec §8.4)
+      66  - Low, noise-like `qa/residual_scan*.png` → trust the solve.
+      67  - Bright along veins → speculars leaking; tighten `solve.reject
+          ion`.
+
+● Both requested changes are complete, verified on the real leaf, and
+  documented. Summary:
+
+  N1 + N2 (the halo / stretch) — same root cause, now fixed with a proper
+  UV-padding-style cleanup: trim the contaminated leaf/background boundary ring
+  (edge.trim_px, default 6px) and re-fill the leaf's own edge from clean
+  interior. The transparency composite confirms a crisp, halo-free,
+  non-stretched edge.
+
+  Alpha map — new alpha.png plus RGBA copies (albedo_srgb_rgba.png,
+  normal_gl_rgba.png) that drop straight onto a transparent plane.
+
+  Padding off by default (edge.pad_px: 0) for your transparent-cutout workflow,
+  but fully preserved as a config toggle for the future UI, alongside
+  edge.trim_px and alpha.feather_px.
+
+  Tests still green (10/10), and the full-res run's residuals actually improved
+  to ~0.009. Re-run anytime with python -m leafscan.cli run --scans 
+  scans/leaf_crop --out out.
+
+✻ Worked for 3m 57s
+
+❯ there is still pixel stretching/padding effect there, the rest is resolved.   
+
+● You're right — that remaining stretch is coming from my fill step, not the
+  warp. To fill the trimmed ring I used nearest-valid (distance_transform_edt),
+  and nearest-neighbor fill produces exactly those radial streaks at the
+  silhouette — especially at the serration tips.
+
+  The fix: don't fill the ring at all. Cut the alpha at the clean core and leave
+  no synthetic edge extension. So the visible leaf is exactly the clean solved
+  data, with zero stretch. Padding (when enabled) still fills, but it lives
+  outside the alpha where it never shows on a cutout.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 15 lines, removed 12 lines
+      197      trim_px = int(ecfg.get("trim_px", 6))
+      198      pad_px = int(ecfg.get("pad_px", 0))
+      199      solved = ref_mask & valid
+      200 -    core = solved                                 # clean sour
+          -ce for filling                                                
+      200 +    core = solved                                 # clean, bac
+          +kground-free silhouette                                       
+      201      if trim_px > 0:
+      202          k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trim
+           _px * 2 + 1,) * 2)
+      203          core = cv2.erode(solved.astype(np.uint8), k).astype(bo
+           ol)
+      204  
+      205 -    # Fill the trimmed leaf boundary ring (and any interior ho
+          -les) from the clean                                           
+      206 -    # core, so the leaf's own edge shows interior-extended dat
+          -a, not white bleed.                                           
+      207 -    # pad_px optionally extends data BEYOND the silhouette for
+          - mesh mip-bleed.                                              
+      208 -    fill_region = ref_mask                                    
+      205 +    # Cut the alpha at `core` and DO NOT extend data past it: 
+          +nearest-valid fill                                            
+      206 +    # produces radial streaks at the silhouette (the "stretch"
+          + artifact), so we                                             
+      207 +    # only fill genuine interior holes (hidden inside the leaf
+          +). pad_px optionally                                          
+      208 +    # adds mip-bleed padding OUTSIDE the leaf — beyond the alp
+          +ha, never seen on a                                           
+      209 +    # cutout.                                                 
+      210 +    fill_region = core                                        
+      211      if pad_px > 0:
+      212          k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (pad_
+           px * 2 + 1,) * 2)
+      211 -        fill_region = cv2.dilate(ref_mask.astype(np.uint8), k)
+          -.astype(bool)                                                 
+      213 +        fill_region = cv2.dilate(core.astype(np.uint8), k).ast
+          +ype(bool)                                                     
+      214  
+      213 -    normal = _fill_invalid(normal, core, fill_region)         
+      214 -    albedo_rgb = _fill_invalid(albedo_rgb, core, fill_region) 
+      215 +    normal = _fill_invalid(normal, solved, fill_region)      #
+          + interior holes (+ pad)                                       
+      216 +    albedo_rgb = _fill_invalid(albedo_rgb, solved, fill_region
+          +)                                                             
+      217      nrm = np.linalg.norm(normal, axis=-1, keepdims=True)
+      218      normal = np.where(nrm > 1e-8, normal / np.clip(nrm, 1e-8, 
+           None), normal)
+      217 -    out_valid = fill_region       # encode clean leaf (+ optio
+          -nal padding)                                                  
+      219 +    out_valid = fill_region       # clean core (+ optional pad
+          +ding)                                                         
+      220      qa_valid = solved             # evaluate residual only whe
+           re we truly solved
+      221  
+      220 -    # Alpha = the leaf silhouette (opacity for a transparent p
+          -lane), NOT padded.                                            
+      222 +    # Alpha = the clean core silhouette, so the visible cutout
+          + is exactly the                                               
+      223 +    # background-free data — no white ring, no fill stretch.  
+      224      acfg = ocfg.get("alpha", {})
+      225      alpha = None
+      226      if acfg.get("enabled", True):
+      224 -        alpha = ref_mask.astype(np.float32)                   
+      227 +        alpha = core.astype(np.float32)                       
+      228          feather = float(acfg.get("feather_px", 0.0))
+      229          if feather > 0:
+      230              alpha = cv2.GaussianBlur(alpha, (0, 0), feather)
+      231      log(f"[edge] trim={trim_px}px pad={pad_px}px  core={int(co
+           re.sum())}px "
+      229 -        f"leaf={int(ref_mask.sum())}px  alpha={'on' if alpha i
+          -s not None else 'off'}")                                      
+      232 +        f"solved={int(solved.sum())}px  alpha={'on' if alpha i
+          +s not None else 'off'}")                                      
+      233  
+      234      # ---- 10. height integration (§9.1) ----
+      235      height = None
+
+● Let me re-run and inspect the same edge close-up.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● I'll show the edge close-up once it finishes.
+
+  Read 1 file (ctrl+o to expand)
+
+● Still running; I'll respond when the run completes.
+
+✻ Crunched for 2m 18s
+
+● Background command "Wait for run" completed (exit code 0)
+
+  Read 1 file, ran 1 shell command (ctrl+o to expand)
+
+● Background command "Re-run full pipeline with no ring fill" completed (exit
+code 0)
+
+● That's resolved — the boundary is now a crisp cut against transparency: no
+  radial fill streaks, no white halo, and the serration tip is preserved as a
+  real point rather than smeared outward. The visible cutout is exactly the
+  clean, background-free data.
+
+  Let me confirm residuals held and tests still pass.
+  Ran 1 shell command (ctrl+o to expand)
+
+● Fixed. The stretching was my nearest-valid fill of the trimmed ring —
+  nearest-neighbor fill always produces those radial streaks at a silhouette.
+  Now the pipeline cuts the alpha at the clean core and doesn't extend data past
+  it, so the visible cutout is exactly the background-free solved data: crisp
+  edge, serration tips intact, no halo, no stretch.
+
+  - Residuals held at ~0.009, tests 10/10 green.
+  - Padding still available as a config toggle (edge.pad_px) — when on, the
+  filled bleed lives outside the alpha where it never shows on a cutout.
+
+  The out/ deliverables (normal_gl/dx, albedo linear+sRGB, alpha, RGBA copies,
+  height, qa/) are regenerated and clean.
+
+✻ Worked for 1m 48s
+
+❯ /context 
+  ⎿  Context Usage
+     ⛁ ⛁ ⛁ ⛁ ⛀ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   Opus 4.8
+     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   claude-opus-4-8
+     ⛁ ⛁ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   208.1k/1m tokens (21%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ 
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   Estimated usage by category
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System prompt: 4.3k tokens (0.4%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ System tools: 15.3k tokens (1.5%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Skills: 2.9k tokens (0.3%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ Messages: 185.6k tokens (18.6%)
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ Free space: 791.9k (79.2%)
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 32 tools · 0 tokens
+
+     Skills · /skills
+     └ 31 skills · 2.9k tokens
+
+     /context all to expand
+
+      Suggestions
+      ℹ Read results using 875.9k tokens (88%) → save ~262.8k
+        Use offset and limit parameters to read only the sections you need. Avoid re-reading entire files when you only need a few lines.
+
+❯ can you quickly create a new folder called docs and move all the scan files   
+  and results we just got into that folder and especially the qa folder?        
+  because we will be open sourcing this project and it will be really useful    
+  material for the docs.                                                        
+
+● I'll move the scans and results into a docs/ folder for the open-source
+  reference material. First let me check total sizes so I can flag if it's heavy
+  for a repo.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● ~443 MB total. I'll move it all into docs/ as asked, organized for docs use,
+  then flag the size (it's heavy for a public repo — I'll offer lightweight
+  versions after).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Everything's moved. Now I need to fix .gitignore — the current scans/ and out/
+  patterns would also match docs/scans/, so the docs material wouldn't be
+  trackable. Let me anchor them to the repo root.
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\.gitignore)
+  ⎿  Error editing file
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\.gitignore)
+  ⎿  Added 5 lines, removed 4 lines
+       5  *.pyc
+       6  .pytest_cache/
+       7  
+       8 -# Large capture data & pipeline outputs (regenerate via the CLI
+         -)                                                              
+       9 -scans/                                                         
+      10 -out/                                                           
+      11 -out_quarter/                                                   
+       8 +# Large capture data & pipeline outputs (regenerate via the CLI
+         +).                                                             
+       9 +# Anchored to root so docs/scans and docs/qa (reference materia
+         +l) stay tracked.                                               
+      10 +/scans/                                                        
+      11 +/out/                                                          
+      12 +/out_quarter/                                                  
+      13  *.bmp
+
+● Let me add a short docs/README.md so the material is self-explanatory for the
+  open-source repo, and verify git will actually track it.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\docs\README.md)
+  ⎿  Wrote 41 lines to ..\..\..\..\docs\README.md
+       1 # Reference material — worked example
+       3 A complete real run of the pipeline on a single grape leaf, capt
+         ured on the
+       4 HP LaserJet M1130/M1132 flatbed at 600 dpi. Useful as documentat
+       5 regression fixture.
+       6 
+       8 - `raw/k0..k3.png` — the four full-glass 600 dpi colour scans, r
+         otated 90°
+       9   between each (petiole steps left → down → right → up). 8-bit s
+      10   scanner's WIA driver caps at 8-bit).
+     … +48 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Done. Everything's in docs/, organized and git-tracked (the .gitignore fix
+  anchors /scans/ and /out/ to root so docs/scans and docs/qa aren't caught):
+
+  docs/
+  ├── README.md            # explains the material + how to reproduce
+  ├── scans/raw/           # k0–k3, full-glass 600 dpi (the originals)
+  ├── scans/cropped/       # k0–k3, common-ROI crop (what the pipeline ran on)
+  ├── results/             # normal_gl/dx, albedo(+srgb), alpha, RGBA copies,
+  height
+  └── qa/                  # residuals, observed/predicted, mask agreement, edge
+  zoom, report.txt
+
+  I also added a docs/README.md describing each folder and the reproduce command
+  (python -m leafscan.cli run --scans docs/scans/cropped --out out).
+
+  One flag before you commit: docs/ is 443 MB — mostly the raw full-res scans
+  (256 MB). That's heavy for a public repo and GitHub will warn/refuse files
+  over 100 MB (the individual PNGs are ~43 MB, so under the hard limit, but it
+  bloats clones). Options, your call:
+  - Git LFS for docs/scans/** and the large docs/results/*.png — keeps full
+  quality, keeps clones light.
+  - Slim it: drop scans/raw/ (keep only cropped/), and/or downscale the doc
+  images to ~1500px — brings it to a few MB, ideal for docs.
+  - Leave as-is if you're fine with the size.
+
+  Want me to set up Git LFS or generate slimmed doc-sized versions?
+
+✻ Sautéed for 2m 53s
+
+❯ lets compress the images. they will be for documentation only and not use so  
+  raw isn't needed.                                                             
+
+● Good call — for docs we only need viewable thumbnails, not full-res textures.
+  I'll drop scans/raw/, downscale everything, and compress: JPEG for
+  photos/diagnostics, PNG only where it matters (normal maps to avoid JPEG
+  blocking, and anything with alpha).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● 443 MB → 27 MB. Now let me fix docs/README.md for the new extensions and note
+  that the cropped scans are now lossy previews (the pipeline consumes lossless
+  input, so it won't ingest these directly).
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\docs\README.md)
+  ⎿  Added 18 lines, removed 24 lines
+       1  # Reference material — worked example
+       2  
+       3  A complete real run of the pipeline on a single grape leaf, cap
+          tured on the
+       4 -HP LaserJet M1130/M1132 flatbed at 600 dpi. Useful as documenta
+         -tion and as a                                                  
+       5 -regression fixture.                                            
+       4 +HP LaserJet M1130/M1132 flatbed at 600 dpi. These are **compres
+         +sed, downscaled                                                
+       5 +images for documentation only** — photos/diagnostics are JPEG, 
+         +normal maps and                                                
+       6 +anything with alpha are 8-bit PNG. The originals were the full-
+         +res lossless                                                   
+       7 +outputs; regenerate them by re-capturing and running the pipeli
+         +ne.                                                            
+       8  
+       7 -## `scans/`                                                    
+       8 -- `raw/k0..k3.png` — the four full-glass 600 dpi colour scans, 
+         -rotated 90°                                                    
+       9 -  between each (petiole steps left → down → right → up). 8-bit 
+         -sRGB (this                                                     
+      10 -  scanner's WIA driver caps at 8-bit).                         
+      11 -- `cropped/k0..k3.png` — the same four scans cropped to a commo
+         -n ROI around the                                               
+      12 -  leaf (all four share one scanner-space box), so the stack fit
+         -s in memory at                                                 
+      13 -  full resolution. This is what the pipeline was run on.       
+       9 +## `scans/cropped/`                                            
+      10 +`k0..k3.jpg` — the four scans, rotated 90° between each (petiol
+         +e steps                                                        
+      11 +left → down → right → up), cropped to a common scanner-space RO
+         +I around the leaf.                                             
+      12 +8-bit sRGB (this scanner's WIA driver caps at 8-bit). *(Lossy p
+         +reviews here; a                                                
+      13 +real run needs lossless PNG/TIFF captures — the CLI ignores JPE
+         +Gs on purpose.)*                                               
+      14  
+      15 -Reproduce:                                                     
+      16 -                                                               
+      17 -```                                                            
+      18 -python -m leafscan.cli run --scans docs/scans/cropped --out out
+      19 -```                                                            
+      20 -                                                               
+      15  ## `results/`
+      22 -Final deliverables (3116 × 3284):                              
+      23 -- `normal_gl.png` / `normal_dx.png` — tangent-space normal maps
+         - (16-bit)                                                      
+      24 -- `albedo.png` (linear) / `albedo_srgb.png` — lighting-free bas
+         -e colour                                                       
+      16 +Final deliverables (downscaled to ≤2048 px):                   
+      17 +- `normal_gl.png` / `normal_dx.png` — tangent-space normal maps
+      18 +- `albedo.jpg` (linear — looks dark) / `albedo_srgb.jpg` — ligh
+         +ting-free base colour                                          
+      19  - `alpha.png` — leaf silhouette / opacity
+      20  - `albedo_srgb_rgba.png`, `normal_gl_rgba.png` — RGBA copies fo
+          r a transparent plane
+      27 -- `height.png` — Frankot–Chellappa integrated relief           
+      21 +- `height.jpg` — Frankot–Chellappa integrated relief           
+      22  
+      23  ## `qa/`
+      24  The diagnostic set (spec §8.4 — the re-render residual is the m
+          ain trust signal):
+      31 -- `residual_scan0..3.png` — |observed − re-rendered| per scan. 
+         -Low and noise-like                                             
+      25 +- `residual_scan0..3.jpg` — |observed − re-rendered| per scan. 
+         +Low and noise-like                                             
+      26    here → trustworthy solve. Final residual means ≈ 0.009 across
+           all four scans.
+      27  - `observed_scan*` / `predicted_scan*` — the two sides of that 
+          comparison.
+      34 -- `mask_agreement.png` — per-pixel count of valid samples (4/4 
+         -across the leaf).                                              
+      28 +- `mask_agreement.jpg` — per-pixel count of valid samples (4/4 
+         +across the leaf).                                              
+      29  - `normal_preview.png` — 8-bit preview of the normal map.
+      36 -- `subsurface_hint.png` — R−B channel difference (vein/subsurfa
+         -ce hint, §5.2).                                                
+      37 -- `rejection_coverage.png` — how often each pixel survived outl
+         -ier rejection.                                                 
+      38 -- `edge_zoom2.png` — boundary close-up over transparency (clean
+         - cutout, no white                                              
+      30 +- `subsurface_hint.jpg` — R−B channel difference (vein/subsurfa
+         +ce hint, §5.2).                                                
+      31 +- `rejection_coverage.jpg` — how often each pixel survived outl
+         +ier rejection.                                                 
+      32 +- `edge_zoom2.jpg` — boundary close-up over transparency (clean
+         + cutout, no white                                              
+      33    halo, no fill stretch).
+      34  - `report.txt` — fitted light vectors + residual stats for this
+           run
+      35    (self-calibrated: az0 ≈ 118°, el ≈ 54°).
+
+● Done. docs/ is now 27 MB (down from 443 MB):
+
+  - Removed scans/raw/ (not needed for docs).
+  - scans/cropped/ → JPEG, ≤1500 px (~256 KB each).
+  - results/ → normal maps + alpha + RGBA kept as 8-bit PNG (no JPEG blocking on
+  normals; alpha preserved); albedo/height as JPEG.
+  - qa/ → all diagnostics JPEG except normal_preview.png; report.txt kept.
+  - Updated docs/README.md for the new extensions and noted the cropped scans
+  are now lossy previews (the CLI deliberately ignores JPEGs, so a real run
+  still needs lossless captures).
+
+  Everything's git-tracked and ready to commit whenever you want.
+
+✻ Sautéed for 2m 17s
+
+❯ Ok, lets start on the frontend UI and the run.bat file to run the software.   
+  your job is to ask me loads of questions to get the feel of what kind of ui I 
+  am looking for, down to the technical specifics to what color scheme i want.  
+  /frontend-design:frontend-design                                              
+
+● I'll load the frontend-design guidance first, then dig into what you want.
+  Since I built this whole pipeline this session, I already have the technical
+  context (Python CLI, WIA capture with physical rotation between scans, YAML
+  config with many toggles, image outputs + QA) — so I'll skip re-exploring code
+  and focus on understanding the UI you want.
+● Skill(frontend-design:frontend-design)
+  ⎿  Successfully loaded skill
+
+● Loaded. I've got full technical context, so let's define the UI. I'll ask in a
+  few rounds, starting with the foundational decisions, then drill into
+  aesthetics and color.
+
+  Round 1 — platform, scope, vibe, control depth:
+
+● User answered Claude's questions:
+  ⎿  · What should the UI be built as? (It has to drive the scanner via WIA and 
+     run the Python pipeline locally.) → Local web app (Recommended)
+     · What should v1 of the UI actually do? → Full end-to-end (Recommended)
+     · What overall feel are you after? (This drives palette, type, and layout.)
+     → Lab instrument
+     · How much of the pipeline's settings should be exposed in the UI? → Simple
+     + Advanced toggle (Recommended)
+
+● Great — local web app, full end-to-end, lab-instrument aesthetic, 
+  Simple+Advanced.
+
+  Before locking color, here's my thinking on making this not look like the
+  generic "dark UI + acid-green accent" (a real risk since the subject is
+  green): the most subject-true palette source is the photometric-stereo normal 
+  encoding itself — the characteristic periwinkle "flat-normal" color (#7C7CFF,
+  where R=X, G=Y, B=Z), with the X/Y/Z channel colors doubling as functional
+  accents for the four light directions. That ties the whole instrument to what
+  it actually computes. Let me pin down color, type, layout, and the signature
+  moment.
+
+  Round 2 — the visual identity:
+
+● User answered Claude's questions:
+  ⎿  · Which color system? (All are dark/lab-instrument; the accent is the 
+     differentiator.) → Amber phosphor / CRT
+     · Typography direction? (Fonts bundled locally with the app.) → Grotesque +
+     mono data (Recommended)
+     · Main layout structure? → Stepped flow + telemetry rail
+     · The signature moment — the one memorable, subject-true interaction. Which
+     should be the hero? → Interactive relight viewer (Recommended)
+
+● Amber phosphor bench, grotesque + mono data, stepped flow + telemetry rail, 
+  interactive relight as the hero. I love this direction — and I'll still
+  smuggle the normal-map R/G/B channel colors in as functional data accents (the
+  four light directions, channel readouts) so amber stays the chrome while the
+  subject's own color-space shows up in the data.
+
+  Round 3 — nailing the details:
+
+● User answered Claude's questions:
+  ⎿  · How much CRT/phosphor treatment do you want? (Reduced-motion always 
+     respected.) → Moderate
+     · How should the interactive relight viewer present the leaf? → Flat plane,
+     per-pixel relight (Recommended)
+     · Which capture steps should the guided flow include beyond the 4 rotated 
+     leaf scans? → Flat-field (blank card), Corrugated calibration, These 
+     options that i selected should remain OPTIONAL, never forced or shown in a 
+     popup,it should be there if people want it but not by default.
+     · Product name / wordmark for the app? (Pick one or type your own.) → 
+     LUMEN-PS
+
+● Moderate CRT, flat-plane WebGL relight, LUMEN-PS, with flat-field and
+  corrugated calibration kept as opt-in extras (never forced, no popups). Noted.
+
+  Round 4 — last big decisions (project handling, setup, and the bench feel):
+
+● User answered Claude's questions:
+  ⎿  · How should the app organize your work across multiple leaves/runs? → 
+     Session library (Recommended)
+     · What should run.bat do? → Launch + desktop shortcut
+     · The raw pipeline log (the [rigid]/[calib]/residual lines) — how visible? 
+     → Structured readouts + collapsible console (Recommended)
+     · Should the app open on a 'bench idle' screen before the workflow? → 
+     Boot/idle bench screen (Recommended)
+
+● That's everything I need. Here's the picture: LUMEN-PS — a local FastAPI web
+  app on an amber-phosphor lab-bench aesthetic (moderate CRT), stepped
+  Capture→Configure→Process→Results flow with a live telemetry rail, a session
+  library, and a WebGL interactive-relight viewer as the hero.
+  Flat-field/calibration stay opt-in. run.bat does one-click setup + shortcut.
+
+  Let me write the plan.
+
+● Updated plan
+  ⎿  /plan to preview
+
+● The plan is written. Let me present it for approval.
+
+● I've captured everything into the plan at federated-hopping-cascade.md. It
+  covers the full design system (LUMEN-PS amber-phosphor identity, type, layout,
+  the WebGL relight hero), the no-build FastAPI + vanilla-JS architecture, the
+  minimal non-forking pipeline hooks (a log_fn for live streaming + auto-ROI so
+  600 dpi "just works"), the session library, run.bat with setup + shortcut, and
+  a concrete verification pass. Opt-in flat-field/calibration and
+  reduced-motion handling are baked in.
+
+● User approved Claude's plan
+  ⎿  Plan saved to: C:\Users\Giorgi\.claude\plans\federated-hopping-cascade.md ·
+     /plan to edit
+     LUMEN-PS — Frontend UI + run.bat
+
+     Context
+
+     leafscan is a working, tested photometric-stereo pipeline driven entirely
+     by a
+     CLI (python -m leafscan.cli run|capture). Capture needs a human in the loop
+     (rotate the leaf 90° between four WIA scans), and there are many config
+     knobs.
+     The goal is a local web app that wraps the whole workflow — guided capture,
+     configuration, processing with live feedback, and an interactive results
+     viewer —
+     plus a one-click run.bat. The app is single-user, local, and talks to the
+     HP
+     flatbed via the existing WIA helper. No cloud, no telemetry off-machine.
+
+     Everything downstream of capture already exists and is proven; the UI is a
+     thin, well-designed shell over cli.run_pipeline and capture_wia. Keep the
+     pipeline the source of truth — the web layer must not fork its logic.
+
+     ---
+     Design system (brief: "lab instrument", amber phosphor, moderate CRT)
+
+     Named LUMEN-PS (Light + Photometric Stereo), styled as an instrument model
+     number. The one bold move — the interactive relight viewer — is the hero;
+     everything else stays quiet and disciplined.
+
+     Color (user-approved amber-phosphor bench; RGB channel accents are the
+     subject's own normal-map color space, used only for data):
+     --base   #0B0B0C   page
+     --panel  #141310   surfaces / rails
+     --line   #2A2620   hairlines / borders
+     --text   #EDE6D6   primary text (warm bone)
+     --dim    #8A6A3A   secondary / muted
+     --amber  #FFB454   primary accent (active, focus, glow)
+     --x-red  #FF6B6B   light/channel X   (data only)
+     --y-grn  #57E39B   light/channel Y   (data only)
+     --z-blu  #6BA8FF   light/channel Z / elevation (data only)
+     --ok     #57E39B   valid    --warn #FFB454   --err #FF6B6B
+
+     Type (bundled .woff2, OFL — no CDN):
+     - Display: Space Grotesk (wordmark, stage titles, big numerals)
+     - Body: Inter (labels, prose, controls)
+     - Data: JetBrains Mono (light vectors, residuals, dpi, coordinates, log)
+
+     Layout: persistent left stage rail (Capture / Configure / Process /
+     Results as a numbered instrument sequence) + main canvas + right telemetry
+     rail (device + session status, light vectors, residual readouts,
+     collapsible
+     raw-log drawer). Boot/idle bench screen on entry.
+
+     Moderate CRT treatment (all gated behind prefers-reduced-motion):
+     faint scanline overlay, amber bloom on active/focus, subtle vignette, a
+     short
+     phosphor "settle" transition when telemetry values change, and a one-time
+     boot
+     sweep on the idle screen. No screen curvature (kept from tipping into
+     costume).
+
+     Signature: relight.js — a raw WebGL2 fragment shader samples the
+     normal + albedo + alpha textures on a flat plane; dragging the light
+     re-shades
+     albedo * max(dot(N,L),0) + ambient in real time, alpha-cut for the
+     transparent
+     look. Elevation + ambient sliders; GL/DX toggle; checker/dark backdrop
+     toggle.
+     This is the project's thesis made tangible.
+
+     Key screens (wireframes)
+
+     BOOT / IDLE                         CAPTURE (stage 1)
+     +----------------------------+      +--+--------------------+---------+
+     |        L U M E N - P S     |      |1●| Rotate & scan      |TELEMETRY|
+     |   photometric stereo bench |      |2 | [ k0 preview ]     |dev: M113|
+     |                            |      |3 | k0● k1○ k2○ k3○    |1200dpi  |
+     | ● scanner: HP M113x  1200  |      |4 | "Rotate 90° CW,    |k0 ok    |
+     | recent sessions:  ▸ ▸ ▸    |      |  |  same face up"     |k1 —     |
+     |        [ New session ]     |      |  | [ Scan k1 ]        |L[k] ... |
+     +----------------------------+      +--+--------------------+---------+
+
+     RESULTS (stage 4) — hero relight
+     +--+-----------------------------+---------+
+     |1 |  ◐ interactive relight      |TELEMETRY|
+     |2 |  (drag the light)           |az0 118° |
+     |3 |  el◍——  ambient◍—  GL|DX    |el  54°  |
+     |4●|  [normal|albedo|alpha|height|resid]   |
+     +--+-----------------------------+---------+
+     Capture uses a manual confirm ("Scan k1") after each rotation — never a
+     timed popup. Flat-field and corrugated-calibration are opt-in toggles shown
+     before capture (off by default), surfaced quietly in the Capture stage's
+     "optional scans" expander — never forced, never a modal.
+
+     ---
+     Architecture (no build step — pure Python + static assets)
+
+     Frontend is vanilla ES modules + CSS + WebGL2, served statically by
+     FastAPI.
+     No node/npm, so run.bat only needs Python. Fonts bundled as local woff2.
+
+     leafscan/web/
+       app.py           FastAPI: routes, static mount, WS
+       jobs.py          background job manager (thread pool +
+     pythoncom.CoInitialize
+                        per worker for WIA COM); job status + log queues
+       sessions.py      session library on disk (sessions/<id>/: scans/ out/
+     session.json)
+       device.py        WIA device status (name, connected, dpi list, depth
+     caps)
+       static/
+         index.html
+         css/app.css
+         js/  app.js  api.js  stepper.js  telemetry.js  capture.js
+              configure.js  process.js  results.js  relight.js
+         fonts/*.woff2
+     run.bat
+
+     Backend endpoints (FastAPI)
+
+     - GET  /api/device — WIA status via device.py (reuses capture_wia.connect
+       - property enumeration already written).
+     - GET/POST /api/sessions, GET /api/sessions/{id} — session library.
+     - POST /api/sessions/{id}/capture {role} — one scan (k0..k3, flat,
+     calib0/90); wraps capture_wia.scan_to_file; returns when done. Long job.
+     - GET  /api/sessions/{id}/scan/{role} — serve scan preview (downscaled).
+     - GET/PUT /api/sessions/{id}/config — merged config (defaults + overrides);
+     Simple controls + Advanced raw-YAML override.
+     - POST /api/sessions/{id}/run — start pipeline job (background).
+     - WS   /api/sessions/{id}/stream — live log lines + parsed stage/percent.
+     - GET  /api/sessions/{id}/result/{name} — serve outputs + qa/*.
+
+     Minimal pipeline changes (do not fork logic)
+
+     1. cli.run_pipeline(...): add log_fn=print param; replace the internal
+     log() body to call log_fn. Backend passes a callback that pushes lines to
+     the session's WS queue. Stage/percent parsed from existing prefixes
+     ([load] [rigid] [nonrigid] [calib] [solve] [integrate] [out] [qa]).
+     2. Auto-ROI crop so 600 dpi "just works" within memory (reproduces the
+     manual crop done during bring-up): add align.union_leaf_bbox(paths, cfg, 
+     scale=0.25, margin) + use it in a new run_pipeline(..., auto_crop=True)
+     path that crops the 4 scans to a common scanner-space box before the
+     full-res
+     solve. Exposed as an Advanced toggle (default on).
+     3. device.py device_status() — small helper reusing capture_wia connect +
+     property reads (name, WIA_IPS_XRES list, WIA_IPA_DEPTH list, connected).
+
+     Jobs run in a thread pool; WIA/COM workers call pythoncom.CoInitialize().
+     In-memory job registry is fine (single-user, local). New deps: fastapi,
+     uvicorn[standard] (websockets). Add to requirements.txt.
+
+     Sessions on disk
+
+     sessions/<slug>/ = { session.json (name, created, config overrides, 
+     status), scans/k*.png, scans/flat.png?, out/…, out/qa/… }. sessions/ is
+     gitignored.
+     Results/relight load straight from out/.
+
+     run.bat (one-click setup + shortcut)
+
+     1. Find Python (py -3 / python), create/reuse .venv.
+     2. pip install -r requirements.txt (idempotent).
+     3. Create a Desktop + Start-menu shortcut to run.bat on first run
+     (PowerShell WScript.Shell.CreateShortcut, amber leaf .ico).
+     4. start "" http://127.0.0.1:8756 then launch uvicorn leafscan.web.app:app.
+     Prints a clear banner; explains if the scanner isn't detected (actionable,
+     in
+     the app's voice).
+
+     ---
+     Verification
+
+     - run.bat on this machine → browser opens to the boot screen showing the
+     live
+     HP M113x device status (reuse the already-verified WIA path).
+     - New session → guided capture: trigger k0, rotate prompt, k1..k3; each
+     preview renders; telemetry dots update. (Physical rotation is the human
+     step.)
+     - Process → live log streams the real [rigid]/[calib]/…residual lines;
+     stage
+     bar advances; auto-ROI keeps 600 dpi within memory.
+     - Results → normal/albedo/alpha/height + QA load; relight viewer re-shades
+     on drag; GL/DX + backdrop toggles work; residual/light readouts match
+     qa/report.txt.
+     - Re-run the existing pytest suite (unchanged pipeline math) → 10/10 green.
+     - Reduced-motion: CRT effects disabled when the OS/browser requests it.
+     - Cross-check the web run's outputs against a cli.py run on the same
+     session's
+     scans — pixel-identical (proves no logic fork).
+
+     Out of scope (v1)
+
+     Backlit transmission capture; multi-user/auth; packaging to a single .exe;
+     mobile layout (desktop-first, but degrades gracefully).
+
+● Plan approved. Let me set up tasks and start building — backend pipeline hooks
+  first (they're the foundation and need no network).
+● Let me read the current cli.py run_pipeline signature and the load section to
+  add hooks precisely.
+
+  Read 1 file (ctrl+o to expand)
+
+● Now let me add the log_fn and auto_crop hooks to run_pipeline:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 20 lines, removed 3 lines
+      84  
+      85  # -------------------------------------------------------------
+          -------------- #
+      86  def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, cali
+          b_paths=None,
+      87 -                 scale=None, verbose=True):                    
+      87 +                 scale=None, verbose=True, log_fn=None, auto_cr
+         +op=False):                                                     
+      88 +    """Run the full pipeline.                                  
+      89 +                                                               
+      90 +    ``log_fn`` — optional callback(str) for streaming progress 
+         +(the web UI passes                                             
+      91 +    one; defaults to print). ``auto_crop`` — crop the 4 scans t
+         +o a common leaf                                                
+      92 +    ROI before the full-res solve so large scans fit in memory.
+      93 +    """                                                        
+      94      out_dir = Path(out_dir)
+      95      qa_dir = out_dir / "qa"
+      96      out_dir.mkdir(parents=True, exist_ok=True)
+     ...
+       98      is_srgb = cfg["io"]["input_is_srgb"]
+       99      lw = tuple(cfg["io"]["luma_weights"])
+      100  
+      101 +    if log_fn is None:                                        
+      102 +        log_fn = print                                        
+      103 +                                                              
+      104      def log(*a):
+      105          if verbose:
+       97 -            print(*a)                                         
+      106 +            log_fn(" ".join(str(x) for x in a))               
+      107  
+      108 +    # ---- 0. optional auto-ROI crop (keeps full-res stacks wi
+          +thin memory) ----                                             
+      109 +    crop_box = None                                           
+      110 +    if auto_crop:                                             
+      111 +        crop_box = align.union_leaf_bbox(scan_paths, cfg)     
+      112 +        log(f"[crop] auto-ROI x[{crop_box[0]},{crop_box[1]}] y
+          +[{crop_box[2]},{crop_box[3]}]")                               
+      113 +                                                              
+      114      # ---- 1. load + linearize ----
+      115      log(f"[load] {len(scan_paths)} scans, scale={scale}, srgb=
+           {is_srgb}")
+      116      rgb, luma = [], []
+      117      for i, sp in enumerate(scan_paths):
+      118          r, meta = io.load_image_linear(sp, is_srgb, scale)
+      119 +        if crop_box is not None:                              
+      120 +            r = _apply_box(r, crop_box, scale)                
+      121          rgb.append(r)
+      122          luma.append(io.to_luminance(r, lw))
+      106 -        log(f"  scan{i}: {sp.name} {meta['shape']} native={met
+          -a['native_dtype']} "                                          
+      123 +        log(f"  scan{i}: {sp.name} {r.shape} native={meta['nat
+          +ive_dtype']} "                                                
+      124              f"distinct={meta['distinct_levels']} genuine_high_
+           bit={meta['genuine_high_bit']}")
+      125      H, W = luma[0].shape
+      126  
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 2 lines
+      128      ref_mask0 = align.segment_leaf(luma[0], **_mask_kw(cfg))
+      129      if flat_path:
+      130          flat_rgb, _ = io.load_image_linear(flat_path, is_srgb,
+            scale)
+      131 +        if crop_box is not None:                              
+      132 +            flat_rgb = _apply_box(flat_rgb, crop_box, scale)  
+      133          flat = io.to_luminance(flat_rgb, lw)
+      134          flat_src = f"scan:{Path(flat_path).name}"
+      135      else:
+
+● Now add the _apply_box helper near _fill_invalid:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 11 lines
+      66      return np.clip(num / den, 0, 1).astype(np.float32)
+      67  
+      68  
+      69 +def _apply_box(arr, box_full, scale):                          
+      70 +    """Crop a loaded (already `scale`d) array to a full-res ROI
+         + box (X0,X1,Y0,Y1)."""                                         
+      71 +    X0, X1, Y0, Y1 = box_full                                  
+      72 +    x0, x1 = int(round(X0 * scale)), int(round(X1 * scale))    
+      73 +    y0, y1 = int(round(Y0 * scale)), int(round(Y1 * scale))    
+      74 +    h, w = arr.shape[:2]                                       
+      75 +    x0, x1 = max(0, x0), min(w, x1)                            
+      76 +    y0, y1 = max(0, y0), min(h, y1)                            
+      77 +    return arr[y0:y1, x0:x1]                                   
+      78 +                                                               
+      79 +                                                               
+      80  def _fill_invalid(arr, valid, region):
+      81      """Nearest-valid fill of invalid pixels within ``region`` (
+          spec §9.2)."""
+      82      from scipy.ndimage import distance_transform_edt
+
+● Now add union_leaf_bbox to align.py:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\align.py)
+  ⎿  Added 37 lines
+      20      "nonrigid_warp",
+      21      "mask_agreement",
+      22      "estimate_flat_field_from_background",
+      23 +    "union_leaf_bbox",                                         
+      24  ]
+      25  
+      26  
+      27 +def union_leaf_bbox(scan_paths, cfg, coarse=0.25, margin_frac=0
+         +.04):                                                          
+      28 +    """Common leaf ROI across all scans, in FULL-res pixel coor
+         +ds (X0,X1,Y0,Y1).                                              
+      29 +                                                               
+      30 +    Segments each scan at a coarse scale (cheap, one at a time)
+         +, unions the leaf                                              
+      31 +    bounding boxes, and adds a margin. Used to crop the stack b
+         +efore a full-res                                               
+      32 +    solve so it fits in memory (spec §11 memory note).         
+      33 +    """                                                        
+      34 +    from . import io  # local import; io has no align dependenc
+         +y                                                              
+      35 +                                                               
+      36 +    is_srgb = cfg["io"]["input_is_srgb"]                       
+      37 +    lw = tuple(cfg["io"]["luma_weights"])                      
+      38 +    m = cfg["align"]["mask"]                                   
+      39 +    kw = dict(close_radius=m["close_radius"], open_radius=m["op
+         +en_radius"],                                                   
+      40 +              keep_largest=m["keep_largest"])                  
+      41 +    x0 = y0 = 1e18                                             
+      42 +    x1 = y1 = -1e18                                            
+      43 +    full_w = full_h = 0                                        
+      44 +    for sp in scan_paths:                                      
+      45 +        r, _ = io.load_image_linear(sp, is_srgb, coarse)       
+      46 +        l = io.to_luminance(r, lw)                             
+      47 +        mask = segment_leaf(l, **kw)                           
+      48 +        ys, xs = np.nonzero(mask)                              
+      49 +        if xs.size == 0:                                       
+      50 +            continue                                           
+      51 +        s = 1.0 / coarse                                       
+      52 +        x0 = min(x0, xs.min() * s); x1 = max(x1, xs.max() * s) 
+      53 +        y0 = min(y0, ys.min() * s); y1 = max(y1, ys.max() * s) 
+      54 +        full_w = max(full_w, int(round(l.shape[1] * s)))       
+      55 +        full_h = max(full_h, int(round(l.shape[0] * s)))       
+      56 +    if x1 < x0:  # no leaf found anywhere -> whole frame       
+      57 +        return (0, full_w, 0, full_h)                          
+      58 +    mx = int(round(margin_frac * max(full_w, full_h)))         
+      59 +    return (max(0, int(x0) - mx), min(full_w, int(x1) + mx),   
+      60 +            max(0, int(y0) - mx), min(full_h, int(y1) + mx))   
+      61 +                                                               
+      62 +                                                               
+      63  # -------------------------------------------------------------
+          -------------- #
+      64  # Masking (§6.5)
+      65  # -------------------------------------------------------------
+          -------------- #
+
+● Now expose --auto-crop in the CLI and pass it through. Let me read the run
+  parser/handler:
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 2 lines
+      350      r.add_argument("--calib", default=None, help="corrugated 0
+           deg,90deg comma pair")
+      351      r.add_argument("--config", default=None)
+      352      r.add_argument("--scale", type=float, default=None)
+      353 +    r.add_argument("--auto-crop", dest="auto_crop", action="st
+          +ore_true",                                                    
+      354 +                   help="crop scans to a common leaf ROI (fits
+          + full-res in memory)")                                        
+      355      r.add_argument("--quiet", action="store_true")
+      356  
+      357      c = sub.add_parser("capture", help="WIA capture helper")
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\cli.py)
+  ⎿  Added 1 line, removed 1 line
+      383          calib_paths = args.calib.split(",") if args.calib else
+            None
+      384          res = run_pipeline(cfg, scans, args.out, flat_path=arg
+           s.flat,
+      385                             calib_paths=calib_paths, scale=args
+           .scale,
+      386 -                           verbose=not args.quiet)            
+      386 +                           verbose=not args.quiet, auto_crop=a
+          +rgs.auto_crop)                                                
+      387          print(f"\nDONE  az0={res['az0']:.2f} el={res['el']:.2f
+           } "
+      388                f"valid_px={res['valid_px']}  -> {res['out_dir']
+           }")
+      389          return res
+
+● Pipeline hooks done. Now the device.py status helper (reuses the WIA helper):
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\__init__.py)
+  ⎿  Wrote 1 line to ..\..\__init__.py
+      1 """LUMEN-PS — local web UI for the leafscan photometric-stereo pi
+        peline."""
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\device.py)
+  ⎿  Wrote 62 lines to ..\..\device.py
+      1 """Scanner status for the boot screen — thin read-only wrapper ov
+        er WIA.
+      2 
+        _wia`. Never
+      4 raises to the caller: returns a status dict so the UI can show a 
+        clear,
+      5 actionable state whether or not a scanner is present.
+      6 """
+      8 
+      9 from .. import capture_wia as cw
+     … +58 lines (ctrl+o to expand)
+
+● Let me make device_status robust to COM threading (FastAPI may call it off the
+  main thread):
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\device.py)
+  ⎿  Added 10 lines
+       9  from .. import capture_wia as cw
+      10  
+      11  
+      12 +def _com_init():                                               
+      13 +    """Initialise COM for the current thread (WIA needs it). Sa
+         +fe to call often."""                                           
+      14 +    try:                                                       
+      15 +        import pythoncom                                       
+      16 +        pythoncom.CoInitialize()                               
+      17 +    except Exception:                                          
+      18 +        pass                                                   
+      19 +                                                               
+      20 +                                                               
+      21  def device_status(name_hint: str = "M113") -> dict:
+      22      """Return {connected, name, dpi_options, depth_options, col
+          or, note}."""
+      23 +    _com_init()                                                
+      24      try:
+      25          dev = cw.connect(name_hint)
+      26          item = dev.Items.Item(1)
+
+● Let me verify the pipeline edits didn't break anything (the lossless scans
+  were moved to docs as JPEG, but the synthetic tests exercise the code paths):
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Let me quick-test the new auto_crop + log_fn paths end-to-end with synthetic
+  scans:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Task 7 done — auto-crop finds the ROI, log_fn captures all output, residuals
+  tiny. Now the web backend (Task 8). Installing FastAPI/uvicorn first.
+  Ran 1 shell command (ctrl+o to expand)
+
+● Now the session library:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\sessions.py)
+  ⎿  Wrote 149 lines to ..\..\sessions.py
+       1 """Session library — one folder per captured leaf.
+       2 
+       3 sessions/<id>/
+         onfig overrides
+       5   scans/         k0..k3.png (+ optional flat.png, calib0.png, ca
+         lib90.png)
+       6   out/           pipeline outputs + qa/
+       7 """
+       9 
+      10 import json
+     … +149 lines (ctrl+o to expand)
+
+● Now the job manager (serialized worker + live log buffer for the WS):
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\jobs.py)
+  ⎿  Wrote 119 lines to ..\..\jobs.py
+       1 """Background jobs — capture and pipeline runs.
+       3 Single worker thread (the scanner is a one-at-a-time resource an
+         d a full-res
+       4 solve is heavy), so jobs serialize naturally. Each job keeps an 
+       5 buffer that the WebSocket endpoint tails by index — no async/thr
+         ead bridging
+          per worker.
+       7 """
+       8 from __future__ import annotations
+      10 import threading
+     … +124 lines (ctrl+o to expand)
+
+● Add auto_crop to the config:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\leafscan\config.yaml)
+  ⎿  Added 2 lines
+      92  
+      93  runtime:
+      94    scale: 1.0                      # global downscale for develo
+          pment (spec §11)
+      95 +  auto_crop: true                 # crop scans to a common leaf
+         + ROI before the                                                
+      96 +                                  # full-res solve so large sta
+         +cks fit in memory                                              
+      97    seed: 0
+
+● Now the FastAPI app with routes, WebSocket log streaming, and on-the-fly image
+  serving:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\app.py)
+  ⎿  Wrote 193 lines to ..\..\app.py
+       1 """LUMEN-PS FastAPI app — serves the UI and bridges to the pipel
+       2 
+       3 Local, single-user. Sync endpoints run in Starlette's threadpool
+          (so WIA/COM
+         ated worker via
+       5 :mod:`jobs`. The WebSocket tails the active job's log buffer by 
+       6 """
+       7 from __future__ import annotations
+       8 
+      10 import io as _io
+     … +208 lines (ctrl+o to expand)
+
+● Now update requirements.txt and .gitignore:
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\requirements.txt)
+  ⎿  Added 6 lines
+       7  pillow>=10.0
+       8  pyyaml>=6.0
+       9  pywin32>=306                 # optional: WIA capture helper onl
+          y (capture_wia.py)
+      10 +                                                               
+      11 +# LUMEN-PS web UI                                              
+      12 +fastapi>=0.110                                                 
+      13 +uvicorn[standard]>=0.27      # includes websockets + watchfiles
+      14 +python-multipart>=0.0.9                                        
+      15 +                                                               
+      16  pytest>=8.0                  # tests only
+
+● Update(E:\CodingProjects\LaserjetTextureScanner\.gitignore)
+  ⎿  Added 4 lines
+      11  /out/
+      12  /out_quarter/
+      13  *.bmp
+      14 +                                                               
+      15 +# Web UI runtime                                               
+      16 +/sessions/                                                     
+      17 +/.venv/                                                        
+
+● Let me create a placeholder index.html and smoke-test the server + /api/device
+  before building the full frontend.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+● Server boots and /api/device returns the live scanner (connected, HP M1130,
+  dpi list, 8/24-bit). Let me quickly validate session + config endpoints, then
+  stop the server and build the real frontend.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Backend fully works — sessions, config deep-merge overrides, live device
+  status. Task 8 done. Let me stop the server and build the frontend (Task 9).
+
+  Ran 1 shell command (ctrl+o to expand)
+● The frontend needs bundled fonts. Let me fetch the woff2 files from Google
+  Fonts (falling back to system fonts if offline).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● The multi-file split is Google's unicode-range subsets — I only need Latin.
+  Let me redo this properly in Python: parse each @font-face, keep only the
+  Latin subset, download those, and generate a local fonts.css.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+● Fonts bundled with a generated fonts.css. Now the frontend. Let me build the
+  HTML shell with the CRT overlays and LUMEN-PS identity.
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\index.html)
+  ⎿  Error writing file
+
+  Read 1 file (ctrl+o to expand)
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\index.html)
+  ⎿  Added 76 lines, removed 1 line
+       1 -<!doctype html><title>LUMEN-PS</title><h1>LUMEN-PS boot placeho
+         -lder</h1>                                                      
+       1   No newline at end of file
+       2 +<!doctype html>                                                
+       3 +<html lang="en">                                               
+       4 +<head>                                                         
+       5 +<meta charset="utf-8">                                         
+       6 +<meta name="viewport" content="width=device-width, initial-scal
+         +e=1">                                                          
+       7 +<title>LUMEN-PS · photometric stereo bench</title>             
+       8 +<link rel="stylesheet" href="/static/css/fonts.css">           
+       9 +<link rel="stylesheet" href="/static/css/app.css">             
+      10 +</head>                                                        
+      11 +<body>                                                         
+      12 +<!-- CRT overlays (disabled under prefers-reduced-motion) -->  
+      13 +<div class="crt" aria-hidden="true">                           
+      14 +  <div class="crt-scan"></div>                                 
+      15 +  <div class="crt-vignette"></div>                             
+      16 +</div>                                                         
+      17 +                                                               
+      18 +<header class="topbar">                                        
+      19 +  <div class="brand">                                          
+      20 +    <span class="mark">LUMEN&#8209;PS</span>                   
+      21 +    <span class="model">MODEL&nbsp;PS&#8209;4 · PHOTOMETRIC STE
+         +REO BENCH</span>                                               
+      22 +  </div>                                                       
+      23 +  <div id="device-pill" class="pill pill--idle" title="Scanner 
+         +status">                                                       
+      24 +    <span class="led"></span><span class="pill-text">probing sc
+         +anner…</span>                                                  
+      25 +  </div>                                                       
+      26 +</header>                                                      
+      27 +                                                               
+      28 +<!-- BOOT / IDLE -->                                           
+      29 +<section id="boot" class="boot">                               
+      30 +  <div class="boot-core">                                      
+      31 +    <div class="boot-sweep" aria-hidden="true"></div>          
+      32 +    <h1 class="boot-title">LUMEN&#8209;PS</h1>                 
+      33 +    <p class="boot-sub">Reconstructs a leaf's normal map by tur
+         +ning a flatbed                                                 
+      34 +      scanner into a four-light photometric-stereo rig.</p>    
+      35 +                                                               
+      36 +    <div id="boot-device" class="boot-device">                 
+      37 +      <span class="led"></span>                                
+      38 +      <span class="boot-device-text">checking bench hardware…</
+         +span>                                                          
+      39 +    </div>                                                     
+      40 +                                                               
+      41 +    <div class="boot-actions">                                 
+      42 +      <button id="btn-new" class="btn btn--primary">New session
+         +</button>                                                      
+      43 +    </div>                                                     
+      44 +                                                               
+      45 +    <div class="boot-recent">                                  
+      46 +      <div class="eyebrow">Recent sessions</div>               
+      47 +      <ul id="recent-list" class="recent-list"><li class="muted
+         +">none yet</li></ul>                                           
+      48 +    </div>                                                     
+      49 +  </div>                                                       
+      50 +</section>                                                     
+      51 +                                                               
+      52 +<!-- MAIN SHELL -->                                            
+      53 +<div id="shell" class="shell" hidden>                          
+      54 +  <nav class="stages" aria-label="Workflow stages">            
+      55 +    <button class="stage" data-stage="capture"><span class="sta
+         +ge-n">1</span><span class="stage-l">Capture</span></button>    
+      56 +    <button class="stage" data-stage="configure"><span class="s
+         +tage-n">2</span><span class="stage-l">Configure</span></button>
+      57 +    <button class="stage" data-stage="process"><span class="sta
+         +ge-n">3</span><span class="stage-l">Process</span></button>    
+      58 +    <button class="stage" data-stage="results"><span class="sta
+         +ge-n">4</span><span class="stage-l">Results</span></button>    
+      59 +  </nav>                                                       
+      60 +                                                               
+      61 +  <main id="stage-main" class="stage-main"></main>             
+      62 +                                                               
+      63 +  <aside class="telemetry">                                    
+      64 +    <div class="tel-head">TELEMETRY</div>                      
+      65 +    <div id="tel-body" class="tel-body"></div>                 
+      66 +    <div class="log-drawer">                                   
+      67 +      <button id="log-toggle" class="log-toggle" aria-expanded=
+         +"false">                                                       
+      68 +        <span class="chev">&#9656;</span> Raw log              
+      69 +      </button>                                                
+      70 +      <pre id="log-console" class="log-console" hidden></pre>  
+      71 +    </div>                                                     
+      72 +  </aside>                                                     
+      73 +</div>                                                         
+      74 +                                                               
+      75 +<script type="module" src="/static/js/app.js"></script>        
+      76 +</body>                                                        
+      77 +</html>                                                        
+
+● Now the design-system CSS — the amber-phosphor lab-bench aesthetic:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\css\app.css
+       )
+  ⎿  Wrote 280 lines to ..\css\app.css
+       1 /* =============================================================
+       2    LUMEN-PS — amber phosphor lab bench
+       3    Display: Space Grotesk · Body: Inter · Data: JetBrains Mono
+       4    =============================================================
+       5 :root{
+       6   --base:#0B0B0C; --panel:#141310; --panel2:#191712; --line:#2A2
+       7   --text:#EDE6D6; --dim:#8A6A3A; --amber:#FFB454; --amber-deep:#
+         C77F2C;
+       8   --x:#FF6B6B; --y:#57E39B; --z:#6BA8FF;
+      10   --glow: 0 0 10px rgba(255,180,84,.35);
+     … +390 lines (ctrl+o to expand)
+
+● Now the JavaScript. First the API layer:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\js\api.js)
+  ⎿  Wrote 36 lines to ..\js\api.js
+      1 // REST + WebSocket helpers for LUMEN-PS.
+      2 const J = (m, url, body) => fetch(url, {
+      3   method: m,
+      4   headers: body ? { 'content-type': 'application/json' } : undefi
+        ned,
+      6 }).then(async r => {
+      7   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).d
+        etail || r.statusText);
+      8   return r.json();
+      9 });
+     … +34 lines (ctrl+o to expand)
+
+● Now the WebGL2 interactive relight viewer — the signature element:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\js\relight.
+       js)
+  ⎿  Wrote 131 lines to ..\js\relight.js
+       1 // Interactive relight — WebGL2. Samples the recovered normal + 
+         albedo + alpha
+       2 // on a flat plane and re-shades albedo * (ambient + max(N·L,0))
+       3 // light. This is the project's thesis made tangible.
+       4 
+       5 const VERT = `#version 300 es
+       6 in vec2 p; out vec2 vUv;
+       7 void main(){ vUv = p*0.5+0.5; gl_Position = vec4(p,0.,1.); }`;
+       9 const FRAG = `#version 300 es
+      10 precision highp float;
+     … +146 lines (ctrl+o to expand)
+
+● Now the main controller app.js:
+
+● Write(E:\CodingProjects\LaserjetTextureScanner\leafscan\web\static\js\app.js)
+  ⎿  Wrote 410 lines to ..\js\app.js
+       1 // LUMEN-PS — front controller: boot, stages, telemetry, live lo
+       2 import { api, streamJob } from './api.js';
+       3 import { Relight } from './relight.js';
+       4 
+       6 const LEAF = ['k0', 'k1', 'k2', 'k3'];
+       7 const STAGES = ['capture', 'configure', 'process', 'results'];
+         nrigid]': 1, '[valid]': 1,
+       9   '[calib]': 2, '[solve]': 3, '[integrate]': 4, '[out]': 5, '[qa
+         ]': 5, '[done]': 6 };
+         te', 'Output'];
+     … +541 lines (ctrl+o to expand)
+  ⎿  You've hit your session limit · resets 8:30pm (Asia/Tbilisi)
+     /upgrade to increase your usage limit.
+
+✻ Cooked for 29m 18s

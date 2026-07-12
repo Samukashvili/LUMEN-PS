@@ -20,7 +20,44 @@ __all__ = [
     "nonrigid_warp",
     "mask_agreement",
     "estimate_flat_field_from_background",
+    "union_leaf_bbox",
 ]
+
+
+def union_leaf_bbox(scan_paths, cfg, coarse=0.25, margin_frac=0.04):
+    """Common leaf ROI across all scans, in FULL-res pixel coords (X0,X1,Y0,Y1).
+
+    Segments each scan at a coarse scale (cheap, one at a time), unions the leaf
+    bounding boxes, and adds a margin. Used to crop the stack before a full-res
+    solve so it fits in memory (spec §11 memory note).
+    """
+    from . import io  # local import; io has no align dependency
+
+    is_srgb = cfg["io"]["input_is_srgb"]
+    lw = tuple(cfg["io"]["luma_weights"])
+    m = cfg["align"]["mask"]
+    kw = dict(close_radius=m["close_radius"], open_radius=m["open_radius"],
+              keep_largest=m["keep_largest"])
+    x0 = y0 = 1e18
+    x1 = y1 = -1e18
+    full_w = full_h = 0
+    for sp in scan_paths:
+        r, _ = io.load_image_linear(sp, is_srgb, coarse)
+        l = io.to_luminance(r, lw)
+        mask = segment_leaf(l, **kw)
+        ys, xs = np.nonzero(mask)
+        if xs.size == 0:
+            continue
+        s = 1.0 / coarse
+        x0 = min(x0, xs.min() * s); x1 = max(x1, xs.max() * s)
+        y0 = min(y0, ys.min() * s); y1 = max(y1, ys.max() * s)
+        full_w = max(full_w, int(round(l.shape[1] * s)))
+        full_h = max(full_h, int(round(l.shape[0] * s)))
+    if x1 < x0:  # no leaf found anywhere -> whole frame
+        return (0, full_w, 0, full_h)
+    mx = int(round(margin_frac * max(full_w, full_h)))
+    return (max(0, int(x0) - mx), min(full_w, int(x1) + mx),
+            max(0, int(y0) - mx), min(full_h, int(y1) + mx))
 
 
 # --------------------------------------------------------------------------- #

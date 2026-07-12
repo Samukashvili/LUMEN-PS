@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LUMEN-PS · photometric stereo bench</title>
+<link rel="stylesheet" href="/static/css/fonts.css">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<!-- CRT overlays (disabled under prefers-reduced-motion) -->
+<div class="crt" aria-hidden="true">
+  <div class="crt-scan"></div>
+  <div class="crt-vignette"></div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">LUMEN&#8209;PS</span>
+    <span class="model">MODEL&nbsp;PS&#8209;4 · PHOTOMETRIC STEREO BENCH</span>
+  </div>
+  <div id="device-pill" class="pill pill--idle" title="Scanner status">
+    <span class="led"></span><span class="pill-text">probing scanner…</span>
+  </div>
+</header>
+
+<!-- BOOT / IDLE -->
+<section id="boot" class="boot">
+  <div class="boot-core">
+    <div class="boot-sweep" aria-hidden="true"></div>
+    <h1 class="boot-title">LUMEN&#8209;PS</h1>
+    <p class="boot-sub">Reconstructs a leaf's normal map by turning a flatbed
+      scanner into a four-light photometric-stereo rig.</p>
+
+    <div id="boot-device" class="boot-device">
+      <span class="led"></span>
+      <span class="boot-device-text">checking bench hardware…</span>
+    </div>
+
+    <div class="boot-actions">
+      <button id="btn-new" class="btn btn--primary">New session</button>
+    </div>
+
+    <div class="boot-recent">
+      <div class="eyebrow">Recent sessions</div>
+      <ul id="recent-list" class="recent-list"><li class="muted">none yet</li></ul>
+    </div>
+  </div>
+</section>
+
+<!-- In-app naming dialog: avoids browser-native prompt() and works in embedded views. -->
+<div id="new-session-dialog" class="modal-backdrop" hidden>
+  <form id="new-session-form" class="modal" aria-labelledby="new-session-title">
+    <div class="eyebrow">New capture session</div>
+    <h2 id="new-session-title">Name this specimen</h2>
+    <p>Use a clear name so its scans and reconstruction remain easy to find.</p>
+    <label class="modal-label" for="new-session-name">Specimen name</label>
+    <input id="new-session-name" name="name" type="text" maxlength="80" value="Grape leaf" autocomplete="off" required>
+    <div class="modal-actions">
+      <button id="new-session-cancel" class="btn btn--ghost" type="button">Cancel</button>
+      <button class="btn btn--primary" type="submit">Create session</button>
+    </div>
+  </form>
+</div>
+
+<!-- MAIN SHELL -->
+<div id="shell" class="shell" hidden>
+  <nav class="stages" aria-label="Workflow stages">
+    <button class="stage" data-stage="capture"><span class="stage-n">1</span><span class="stage-l">Capture</span></button>
+    <button class="stage" data-stage="configure"><span class="stage-n">2</span><span class="stage-l">Configure</span></button>
+    <button class="stage" data-stage="process"><span class="stage-n">3</span><span class="stage-l">Process</span></button>
+    <button class="stage" data-stage="results"><span class="stage-n">4</span><span class="stage-l">Results</span></button>
+  </nav>
+
+  <main id="stage-main" class="stage-main"></main>
+
+  <aside class="telemetry">
+    <div class="tel-head">TELEMETRY</div>
+    <div id="tel-body" class="tel-body"></div>
+    <div class="log-drawer">
+      <button id="log-toggle" class="log-toggle" aria-expanded="false">
+        <span class="chev">&#9656;</span> Raw log
+      </button>
+      <pre id="log-console" class="log-console" hidden></pre>
+    </div>
+  </aside>
+</div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

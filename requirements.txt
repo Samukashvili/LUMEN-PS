@@ -7,4 +7,10 @@ imageio>=2.34
 pillow>=10.0
 pyyaml>=6.0
 pywin32>=306                 # optional: WIA capture helper only (capture_wia.py)
+
+# LUMEN-PS web UI
+fastapi>=0.110
+uvicorn[standard]>=0.27      # includes websockets + watchfiles
+python-multipart>=0.0.9
+
 pytest>=8.0                  # tests only

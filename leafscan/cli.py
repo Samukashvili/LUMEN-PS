@@ -66,6 +66,17 @@ def _color_albedo(rgb_stack, normal, L, weights):
     return np.clip(num / den, 0, 1).astype(np.float32)
 
 
+def _apply_box(arr, box_full, scale):
+    """Crop a loaded (already `scale`d) array to a full-res ROI box (X0,X1,Y0,Y1)."""
+    X0, X1, Y0, Y1 = box_full
+    x0, x1 = int(round(X0 * scale)), int(round(X1 * scale))
+    y0, y1 = int(round(Y0 * scale)), int(round(Y1 * scale))
+    h, w = arr.shape[:2]
+    x0, x1 = max(0, x0), min(w, x1)
+    y0, y1 = max(0, y0), min(h, y1)
+    return arr[y0:y1, x0:x1]
+
+
 def _fill_invalid(arr, valid, region):
     """Nearest-valid fill of invalid pixels within ``region`` (spec §9.2)."""
     from scipy.ndimage import distance_transform_edt
@@ -84,7 +95,13 @@ def _fill_invalid(arr, valid, region):
 
 # --------------------------------------------------------------------------- #
 def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
-                 scale=None, verbose=True):
+                 scale=None, verbose=True, log_fn=None, auto_crop=False):
+    """Run the full pipeline.
+
+    ``log_fn`` — optional callback(str) for streaming progress (the web UI passes
+    one; defaults to print). ``auto_crop`` — crop the 4 scans to a common leaf
+    ROI before the full-res solve so large scans fit in memory.
+    """
     out_dir = Path(out_dir)
     qa_dir = out_dir / "qa"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -92,18 +109,29 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     is_srgb = cfg["io"]["input_is_srgb"]
     lw = tuple(cfg["io"]["luma_weights"])
 
+    if log_fn is None:
+        log_fn = print
+
     def log(*a):
         if verbose:
-            print(*a)
+            log_fn(" ".join(str(x) for x in a))
+
+    # ---- 0. optional auto-ROI crop (keeps full-res stacks within memory) ----
+    crop_box = None
+    if auto_crop:
+        crop_box = align.union_leaf_bbox(scan_paths, cfg)
+        log(f"[crop] auto-ROI x[{crop_box[0]},{crop_box[1]}] y[{crop_box[2]},{crop_box[3]}]")
 
     # ---- 1. load + linearize ----
     log(f"[load] {len(scan_paths)} scans, scale={scale}, srgb={is_srgb}")
     rgb, luma = [], []
     for i, sp in enumerate(scan_paths):
         r, meta = io.load_image_linear(sp, is_srgb, scale)
+        if crop_box is not None:
+            r = _apply_box(r, crop_box, scale)
         rgb.append(r)
         luma.append(io.to_luminance(r, lw))
-        log(f"  scan{i}: {sp.name} {meta['shape']} native={meta['native_dtype']} "
+        log(f"  scan{i}: {sp.name} {r.shape} native={meta['native_dtype']} "
             f"distinct={meta['distinct_levels']} genuine_high_bit={meta['genuine_high_bit']}")
     H, W = luma[0].shape
 
@@ -111,6 +139,8 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     ref_mask0 = align.segment_leaf(luma[0], **_mask_kw(cfg))
     if flat_path:
         flat_rgb, _ = io.load_image_linear(flat_path, is_srgb, scale)
+        if crop_box is not None:
+            flat_rgb = _apply_box(flat_rgb, crop_box, scale)
         flat = io.to_luminance(flat_rgb, lw)
         flat_src = f"scan:{Path(flat_path).name}"
     else:
@@ -320,6 +350,8 @@ def main(argv=None):
     r.add_argument("--calib", default=None, help="corrugated 0deg,90deg comma pair")
     r.add_argument("--config", default=None)
     r.add_argument("--scale", type=float, default=None)
+    r.add_argument("--auto-crop", dest="auto_crop", action="store_true",
+                   help="crop scans to a common leaf ROI (fits full-res in memory)")
     r.add_argument("--quiet", action="store_true")
 
     c = sub.add_parser("capture", help="WIA capture helper")
@@ -351,7 +383,7 @@ def main(argv=None):
         calib_paths = args.calib.split(",") if args.calib else None
         res = run_pipeline(cfg, scans, args.out, flat_path=args.flat,
                            calib_paths=calib_paths, scale=args.scale,
-                           verbose=not args.quiet)
+                           verbose=not args.quiet, auto_crop=args.auto_crop)
         print(f"\nDONE  az0={res['az0']:.2f} el={res['el']:.2f} "
               f"valid_px={res['valid_px']}  -> {res['out_dir']}")
         return res
