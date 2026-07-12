@@ -5,8 +5,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# Large capture data & pipeline outputs (regenerate via the CLI)
-scans/
-out/
-out_quarter/
+# Large capture data & pipeline outputs (regenerate via the CLI).
+# Anchored to root so docs/scans and docs/qa (reference material) stay tracked.
+/scans/
+/out/
+/out_quarter/
 *.bmp
