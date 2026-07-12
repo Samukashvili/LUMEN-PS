@@ -1,0 +1,86 @@
+# leafscan — configuration
+# Every magic number in the pipeline lives here, not in code (spec §11).
+# Units: angles in degrees, resolutions in dpi, lengths in pixels unless noted.
+
+capture:
+  device_name_hint: "M113"        # substring to pick the HP flatbed among WIA devices
+  dpi: 1200                       # native optical (spec §4.2b). 600 acceptable.
+  color: true                     # 24-bit RGB (keeps R-B subsurface hint + colour albedo)
+  # Region of interest on the glass, in millimetres from the top-left origin.
+  # null extent => full available area. Keep the leaf + fiducial card inside this.
+  roi_mm: {x: 0, y: 0, w: null, h: null}
+  brightness: 6                   # WIA neutral (range 1..11). Lock identical for all scans.
+  contrast: 6                     # WIA neutral. Lock identical for all scans.
+  lamp_warmup_ms: 5000
+
+io:
+  input_is_srgb: true             # HP WIA driver emits 8-bit sRGB (verified on M1130). Undo it.
+  bit_depth: 8                    # this hardware caps at 8-bit; 16 is padded if it ever appears
+  # Rec.709 linear-luminance weights used for the photometric channel.
+  luma_weights: [0.2126, 0.7152, 0.0722]
+  black_level: 0.0                # sensor black offset. 0 is fine unless a real dark
+                                  # scan exists (spec §4.3.2). Set null to estimate
+                                  # from a flat-field that has a genuine unlit border.
+  black_percentile: 1.0           # percentile used only when black_level is null
+  flat_field_blur_sigma: 0.0      # optional gaussian on flat-field before dividing (0 = off)
+
+light:
+  # Fitted by calibrate.py; these are seeds / fallbacks (spec §7, §3.3).
+  az0_deg: 90.0                   # prior: light tilts along Y (travel) axis
+  el_deg: 30.0                    # MUST be calibrated, never trusted as-is
+  rotation_sign: 1                # direction of physical card rotation; fiducials override. See lights.py
+  source: "seed"                  # overwritten to 'cardboard'/'selfcal'/'config' at runtime
+
+align:
+  fiducials:
+    enabled: true
+    method: "aruco"               # 'aruco' | 'checker_crosshair' | 'none'
+    aruco_dict: "DICT_4X4_50"
+    min_markers: 3                # need >=3 for a robust similarity fit
+  rigid:
+    interpolation: "lanczos4"     # lanczos4 | cubic
+    nominal_step_deg: 90.0        # fallback de-rotation when fiducials absent
+    ecc_refine: true              # refine fallback with ECC on the mask
+  nonrigid:
+    enabled: true
+    proxy: "mask_dt+veins"        # 'mask_dt' | 'veins' | 'mask_dt+veins'
+    method: "dis"                 # 'dis' (DISOpticalFlow) | 'farneback'
+    vein_highpass_sigma: 6.0
+    flow_downscale: 0.25          # estimate flow on a small copy (DIS can't find
+                                  # the hundreds-of-px leaf deformation at 600 dpi)
+    flow_smooth_sigma: 2.0        # post-smooth the flow field
+    max_warp_px: 600              # sanity clamp in full-res px (spec §6.4)
+  mask:
+    otsu: true
+    close_radius: 5
+    open_radius: 3
+    keep_largest: true
+    min_valid_samples: 3          # valid pixel needs >=3 of 4 warped samples
+
+solve:
+  rejection: "drop_brightest"     # none | drop_brightest | drop_brightest_and_darkest
+  min_surviving: 3
+  ridge_lambda: 1.0e-6            # tiny Tikhonov for numerical stability of (LtL)^-1
+
+integrate:
+  enabled: true
+  method: "frankot_chellappa"
+  highpass_sigma: 0.0             # >0 to remove low-freq doming from the height field
+
+output:
+  normal_bits: 16                 # 16-bit PNG normals to avoid banding on low slopes
+  albedo_linear: true             # export linear albedo
+  albedo_srgb: true               # and an sRGB-encoded copy
+  smooth:
+    normals_bilateral: false      # off by default — preserves vein detail
+    bilateral_d: 5
+    bilateral_sigma_color: 0.05
+    bilateral_sigma_space: 3.0
+
+transmission:                     # stretch goal §10 (off by default)
+  enabled: false
+  blend_into_height: 0.0          # weight of transmission veins into height (0 = off)
+
+runtime:
+  scale: 1.0                      # global downscale for development (spec §11)
+  seed: 0

@@ -1,0 +1,10 @@
+# leafscan — scanner photometric stereo. Windows, Python 3.11+ (tested on 3.14).
+numpy>=2.0
+scipy>=1.11
+opencv-contrib-python>=4.9   # needs optflow (DISOpticalFlow) + aruco
+tifffile>=2024.1
+imageio>=2.34
+pillow>=10.0
+pyyaml>=6.0
+pywin32>=306                 # optional: WIA capture helper only (capture_wia.py)
+pytest>=8.0                  # tests only

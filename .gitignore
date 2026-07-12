@@ -1,0 +1,12 @@
+scanner_photometric_stereo_spec.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Large capture data & pipeline outputs (regenerate via the CLI)
+scans/
+out/
+out_quarter/
+*.bmp
