@@ -11,6 +11,7 @@ Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no
 ![Capture WIA 2.0](https://img.shields.io/badge/capture-WIA%202.0-f0a64a)
 ![Photometric stereo](https://img.shields.io/badge/reconstruction-photometric%20stereo-65a96b)
 ![CUDA accelerated](https://img.shields.io/badge/acceleration-CUDA%20%2B%20CPU-76B900?logo=nvidia&logoColor=white)
+![License MIT](https://img.shields.io/badge/license-MIT-111827)
 
 <img src="docs/assets/kiwi-relight.gif" width="640" alt="Recovered Kiwi leaf relit through a full 360 degree orbit">
 
@@ -221,6 +222,10 @@ python -m leafscan.cli selftest
 ```
 
 The implementation is organized into `io`, `lights`, `align`, `calibrate`, `solve`, `cleanup`, `compute`, `integrate`, `outputs`, and `qa`, with the WIA capture bridge and FastAPI/WebGL UI alongside them. Tunable values live in [`leafscan/config.yaml`](leafscan/config.yaml). The detailed derivation and design rationale live in [`scanner_photometric_stereo_spec.md`](scanner_photometric_stereo_spec.md).
+
+## License
+
+LUMEN-PS is released under the [MIT License](LICENSE).
 
 ---
 
