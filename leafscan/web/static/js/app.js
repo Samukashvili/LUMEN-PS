@@ -184,6 +184,7 @@ async function enterSession(sid) {
 }
 async function returnToRecent() {
   if (S.closeWS) { S.closeWS(); S.closeWS = null; }
+  disposeRelight();
   S.sid = null; S.meta = null;
   $('#shell').hidden = true; $('#boot').hidden = false;
   await paintRecent();
@@ -200,7 +201,10 @@ function paintStageNav() {
       || (b.dataset.stage === 'process' && !S.meta.ready);
   });
 }
+function disposeRelight() { if (S.relight) { try { S.relight.dispose(); } catch (_) {} S.relight = null; } }
+
 function gotoStage(name) {
+  disposeRelight();
   S.stage = name; paintStageNav();
   const render = { capture: renderCapture, process: renderProcess, results: renderResults }[name];
   Promise.resolve(render()).catch(err => {
@@ -499,6 +503,7 @@ function wireResults(files) {
   modeButtons.forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
   const names = new Set(files.map(f => f.name));
   if (names.has('normal_gl.png') && names.has('albedo_srgb.png') && names.has('alpha.png')) {
+    disposeRelight();
     const rl = new Relight($('#rl'));
     rl.load(api.resultURL(S.sid, 'normal_gl.png', 2048), api.resultURL(S.sid, 'albedo_srgb.png', 2048),
       api.resultURL(S.sid, 'alpha.png', 2048)).catch(err => logLine('[error] relight: ' + err.message));

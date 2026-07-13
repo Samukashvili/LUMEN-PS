@@ -42,7 +42,35 @@ function sh(gl, type, src){
 export class Relight{
   constructor(canvas){
     this.canvas = canvas;
-    const gl = canvas.getContext('webgl2', {antialias:true, premultipliedAlpha:false});
+    this.imgAspect = 1;
+    this.state = { el: 35, ambient: 0.12, dx: false, backdrop: 1, lx: 0.0, ly: 0.6 };
+    this._dirty = true;
+    this._tex = {};
+    this._imgs = null;
+    this._running = true;
+    this._raf = null;
+
+    // Survive a lost/restored GL context (GPU switch, driver reset, tab sleep)
+    // instead of leaving a permanently black canvas.
+    this._onLost = e => { e.preventDefault(); if(this._raf){ cancelAnimationFrame(this._raf); this._raf = null; } };
+    this._onRestored = () => {
+      this._initGL(); this._uploadTextures(); this._dirty = true;
+      if(this._running && this._raf === null) this._loop();
+    };
+    canvas.addEventListener('webglcontextlost', this._onLost, false);
+    canvas.addEventListener('webglcontextrestored', this._onRestored, false);
+
+    this._initGL();
+
+    this._onMove = e => this._pointer(e);
+    this._onDown = e => { canvas.setPointerCapture(e.pointerId); this._pointer(e); };
+    canvas.addEventListener('pointermove', this._onMove);
+    canvas.addEventListener('pointerdown', this._onDown);
+    this._loop();
+  }
+
+  _initGL(){
+    const gl = this.canvas.getContext('webgl2', {antialias:true, premultipliedAlpha:false});
     if(!gl) throw new Error('WebGL2 unavailable');
     this.gl = gl;
     const prog = gl.createProgram();
@@ -51,31 +79,37 @@ export class Relight{
     gl.linkProgram(prog);
     if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     this.prog = prog; gl.useProgram(prog);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    this._buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, 'p');
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     this.u = {};
     ['uN','uA','uAlpha','uFit','uL','uAmbient','uDX','uBackdrop'].forEach(k =>
       this.u[k] = gl.getUniformLocation(prog, k));
-
-    this.imgAspect = 1;
-    this.state = { el: 35, ambient: 0.12, dx: false, backdrop: 1, lx: 0.0, ly: 0.6 };
-    this._dirty = true; this._tex = {};
-
-    canvas.addEventListener('pointermove', e => this._pointer(e));
-    canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); this._pointer(e); });
-    this._loop();
+    this._tex = {};
   }
 
   async load(nURL, aURL, alphaURL){
     const [n, a, al] = await Promise.all([this._img(nURL), this._img(aURL), this._img(alphaURL)]);
+    this._imgs = { uN: n, uA: a, uAlpha: al };
     this.imgAspect = n.naturalWidth / n.naturalHeight;
-    this._tex.n = this._texture(n, 0, 'uN');
-    this._tex.a = this._texture(a, 1, 'uA');
-    this._tex.alpha = this._texture(al, 2, 'uAlpha');
+    this._uploadTextures();
     this._dirty = true;
+  }
+
+  _uploadTextures(){
+    if(!this.gl || !this._imgs) return;
+    this._deleteTextures();
+    this._tex.uN = this._texture(this._imgs.uN, 0, 'uN');
+    this._tex.uA = this._texture(this._imgs.uA, 1, 'uA');
+    this._tex.uAlpha = this._texture(this._imgs.uAlpha, 2, 'uAlpha');
+  }
+
+  _deleteTextures(){
+    if(!this.gl) return;
+    for(const t of Object.values(this._tex)) if(t) this.gl.deleteTexture(t);
+    this._tex = {};
   }
 
   _img(url){ return new Promise((res, rej) => {
@@ -113,11 +147,14 @@ export class Relight{
   }
 
   _loop(){
-    requestAnimationFrame(() => this._loop());
+    if(!this._running){ this._raf = null; return; }
+    this._raf = requestAnimationFrame(() => this._loop());
+    const gl = this.gl;
+    if(gl.isContextLost()) return;
     this._resize();
-    if(!this._dirty || !this._tex.n) return;
+    if(!this._dirty || !this._tex.uN) return;
     this._dirty = false;
-    const gl = this.gl, s = this.state;
+    const s = this.state;
     const ca = this.canvas.width/this.canvas.height, ia = this.imgAspect;
     const fit = ca > ia ? [ca/ia, 1] : [1, ia/ca];
     const el = s.el*Math.PI/180, ch = Math.cos(el);
@@ -127,5 +164,26 @@ export class Relight{
     gl.uniform1f(this.u.uDX, s.dx?1:0);
     gl.uniform1f(this.u.uBackdrop, s.backdrop);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  // Stop the render loop and release GL + DOM resources. Call before dropping a
+  // viewer (e.g. leaving the results stage) so instances don't pile up — each
+  // one holds a live WebGL2 context, and browsers only allow a handful.
+  dispose(){
+    this._running = false;
+    if(this._raf){ cancelAnimationFrame(this._raf); this._raf = null; }
+    this.canvas.removeEventListener('pointermove', this._onMove);
+    this.canvas.removeEventListener('pointerdown', this._onDown);
+    this.canvas.removeEventListener('webglcontextlost', this._onLost);
+    this.canvas.removeEventListener('webglcontextrestored', this._onRestored);
+    const gl = this.gl;
+    if(gl && !gl.isContextLost()){
+      this._deleteTextures();
+      if(this.prog) gl.deleteProgram(this.prog);
+      if(this._buf) gl.deleteBuffer(this._buf);
+      const ext = gl.getExtension('WEBGL_lose_context');
+      if(ext) ext.loseContext();
+    }
+    this._imgs = null;
   }
 }
