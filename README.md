@@ -51,9 +51,9 @@ The reconstruction is only as good as its registration. Every output pixel must 
 ![Registration pipeline: segment the subject, de-rotate rigidly, estimate flow on a lighting-invariant proxy, remap the raw scan once](docs/assets/registration-pipeline.svg)
 
 1. **Segment.** Otsu thresholding on linear luminance separates the darker subject from the bright platen background, followed by morphological cleanup and a largest-component pass. The resulting silhouette anchors everything that follows.
-2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the nominal −90°·k about the subject's centroid, and the result is refined with ECC image alignment — run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting.
+2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the nominal −90°·k about the subject's centroid and refined twice. First with ECC image alignment run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting; each candidate refinement is accepted only if it does not reduce silhouette overlap, so it can never make the nominal placement worse. Then a **feature-matching pass** takes over: ORB keypoints on contrast-normalized luminance (detected away from the boundary, where per-scan shadow direction jitters the mask) are matched under a tight displacement budget and fit to a rigid transform with RANSAC, iterated to convergence. A correction is accepted only when it measurably improves dense high-pass image agreement — a lighting-robust check that catches spatially clustered false consensus. This matters because hand-placed rotations are genuinely 0.5–2° off the nominal 90° steps, an error the mask outline cannot reveal but interior texture can.
 3. **Proxy flow.** A rigid transform is not enough for a leaf, a pressed flower, or fabric: handling it between rotations lets it settle slightly differently each time. Dense DIS optical flow measures that elastic deformation — but on a purpose-built proxy image, never on the raw pixels.
-4. **Remap once.** The flow field is smoothed, clamped to a sane maximum displacement (60 px by default), and applied to the full-detail original in a single interpolation, so no detail is lost to repeated resampling. Pixels that end up covered by fewer than three warped views are excluded from the solve as underdetermined.
+4. **Remap once.** The flow field is smoothed, clamped to a sane maximum displacement (600 px at full resolution by default), and applied to the full-detail original in a single interpolation, so no detail is lost to repeated resampling. Pixels that end up covered by fewer than three warped views are excluded from the solve as underdetermined.
 
 The subtle part is what the elastic step is *not allowed to see*. Optical flow works by moving pixels until brightness matches — but between rotations, the brightness differences **are the measurement**. Run flow on the raw scans and it will happily bend the leaf until the shading agrees, silently erasing the directional signal photometric stereo depends on. So the flow is computed on a lighting-invariant proxy instead: the silhouette's distance transform provides the large-scale shape, and a high-pass of the luminance contributes vein- and texture-scale detail. Both look identical no matter where the lamp sits, so the recovered flow can only describe how the subject physically settled.
 
@@ -67,7 +67,7 @@ One practical trick makes this tractable at scanner resolutions: a thin subject 
 |:--|:--|:--|
 | **1 · Capture** | Scan at 0°, 90°, 180°, and 270° with identical exposure and color settings. | Produces four observations with different subject-relative light azimuths. |
 | **2 · Linearize** | Undo sRGB gamma and optionally divide by a blank-card flat field. | Photometric stereo requires pixel values proportional to received light. |
-| **3 · Register** | De-rotate using fiducials, refine rigid alignment, then correct small elastic changes. | The same output pixel must represent the same physical point in all four scans. |
+| **3 · Register** | De-rotate using fiducials, refine rigidly with mask ECC and iterated feature matching, then correct small elastic changes. | The same output pixel must represent the same physical point in all four scans. |
 | **4 · Calibrate** | Fit lamp azimuth and elevation from a calibration card or from re-render error. | The light elevation controls how strongly recovered normals tilt. |
 | **5 · Solve** | Robustly solve `I = ρ(N · L)` per pixel, dropping highlight/shadow outliers. | Separates lighting-free albedo `ρ` from surface normal `N`. |
 | **6 · Repair** | Detect locally inconsistent normals, identify a bad scan by leave-one-out re-solving, and selectively inpaint only unrecoverable pixels. | Removes registration/gloss artifacts without smoothing away trustworthy vein relief. |
@@ -79,7 +79,21 @@ One practical trick makes this tractable at scanner resolutions: a thin subject 
 |:--:|:--:|:--:|
 | ![Recovered Kiwi sRGB albedo](docs/assets/kiwi-albedo.webp) | ![Recovered Kiwi OpenGL normal map](docs/assets/kiwi-normal.webp) | ![Integrated Kiwi height field](docs/assets/kiwi-height.webp) |
 
-These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. Full outputs remain 16-bit where useful; README images are compressed display copies only.
+These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. The delivered silhouette is edge-trimmed and lightly regularized (`output.edge` in the config) so per-scan shadow jitter does not serrate the alpha cutout. Full outputs remain 16-bit where useful; README images are compressed display copies only.
+
+## Not just leaves: a rigid prototype PCB
+
+A bare 5 × 7 cm phenolic prototyping board is close to a worst case for outline-based registration: it is rigid, rectangular, nearly symmetric, and covered in a periodic hole lattice that gives elastic matching every opportunity to lock onto the wrong grid cell. It is exactly the subject that motivated the feature-matching refinement — the recovered rotations for this run were 90.51°, −179.63°, and −89.76°, the real hand-placed offsets that centroid and silhouette methods cannot see.
+
+<p align="center"><img src="docs/assets/pcb-four-scans.webp" width="100%" alt="Four prototype-PCB captures at 0, 90, 180, and 270 degrees, each scanned only over its detected area"></p>
+
+The four captures above are shown exactly as the scanner delivered them: the **fast area scan** located the board in a 75 dpi preview pass and then scanned only the detected area at 1200 dpi (about 72 × 91 mm instead of the full 216 × 297 mm bed — roughly a tenth of the area, with proportionally shorter head travel and smaller files per rotation). The pipeline places each capture back at its true glass position before alignment, so the varying crops cost nothing.
+
+| PCB albedo (lighting removed) | PCB OpenGL normal map | PCB integrated height |
+|:--:|:--:|:--:|
+| ![Recovered PCB sRGB albedo](docs/assets/pcb-albedo.webp) | ![Recovered PCB OpenGL normal map](docs/assets/pcb-normal.webp) | ![Integrated PCB height field](docs/assets/pcb-height.webp) |
+
+Every drilled hole resolves as an individual dimple in the normal map, the silkscreen grid sits flat where it should, and the height panel (contrast-mapped from the 16-bit original) shows the shallow board warp plus per-hole relief. Re-render residual means for the four scans were **0.0070–0.0131** on normalized linear intensity, from `sessions/pcb-scan-20260714-194232/out`. The usual caution stands: this board is light and smooth, but any rigid object can scratch the platen — never press one down with the lid.
 
 ## Why it works
 
@@ -142,6 +156,16 @@ runtime:
 
 `auto` is recommended: it keeps the tiny grouped linear systems on the faster CPU path while sending large array and FFT workloads to CUDA. `cpu` disables CUDA completely; `gpu` forces every supported operation onto CUDA and is mainly useful for profiling. CUDA and CPU paths feed the same normal, albedo, height, preview, QA, and export code, so acceleration does not create a separate rendering result.
 
+## Fast area scan and memory-aware cropping
+
+Scanning the full bed four times at 1200 dpi is slow and produces four ~350-megapixel-bed images that are mostly empty platen. Two cooperating features keep both the scanner and the solver working only on the subject:
+
+**Fast area scan** (`capture.smart_roi`) runs a quick 75 dpi locator pass over the whole bed, detects the subject against the platen background, and then performs the high-dpi detail scan over just the detected area plus a safety margin (10 mm by default). Detection deliberately ignores anything hugging the preview border — the bed edge, calibration strip, and lid seam leave dark slivers there that would otherwise balloon the region to the full bed. Because scanner drivers snap scan windows to their own grid (the tested HP rounds extents up to multiples of 8 px), the session records the rectangle the driver *actually* scanned, not the requested one, along with the dpi each capture used.
+
+**Auto crop** (`runtime.auto_crop`) closes the loop at processing time. Each ROI capture is placed back at its true glass position, reconstructing one consistent bed coordinate frame for alignment and flat-fielding. The common content window is computed first from coarse masks in bed coordinates, so only that window is ever assembled — full-bed-sized canvases are never allocated, and the full-resolution solve stays within memory even at 1200 dpi.
+
+For the PCB example above this meant ~20 MB per capture, the scan head stopping right after the board on every pass, and a working canvas barely larger than the board itself instead of four padded full-bed frames.
+
 ### Details hidden inside the simple idea
 
 - **Four scans are deliberate.** Two intensity measurements cannot determine a three-component scaled normal. Three is the mathematical minimum; the fourth gives the solver room to reject one highlight or shadow and still remain determined.
@@ -183,6 +207,7 @@ Verified hardware: **HP LaserJet Professional M1130/M1132 MFP**, USB, WIA 2.0, a
 |:--|:--|
 | Leaves and pressed flowers | Polished coins, foil, glossy plastic, wet surfaces |
 | Paper, prints, cardboard, embossed stock | Transparent or translucent objects without a diffuse surface |
+| Bare prototype PCBs and other matte, flat rigid boards (see the PCB example; handle the platen with care) | Populated boards with tall or sharp components |
 | Fabric, leather, thin bark, flat natural textures | Deep objects that cast strong shadows or cannot remain registered |
 | Shallow relief and mostly matte craft materials | Anything sharp, heavy, hot, dirty, or likely to damage the platen |
 
