@@ -154,10 +154,15 @@ def _run_capture(job: dict, sid: str, role: str):
             verbose=False,
         )
         _check_cancelled(job)
-        info["roi_mm"] = roi_mm
+        # Record the rectangle the driver ACTUALLY scanned (positions/extents
+        # get snapped), not the requested one: run-time bed placement of the
+        # ROI captures is only exact with the true geometry.
+        actual_roi = info.get("roi_mm_actual") if roi_mm else None
+        actual_dpi = int(info["dpi"][0]) if info.get("dpi") else cap["dpi"]
+        info["roi_mm"] = actual_roi or roi_mm
         _log(job, f"[scan] {role}: {info['shape']} depth={info['depth']} "
                   f"distinct={info['distinct_levels']}")
-        S.record_scan(sid, role, roi_mm=roi_mm, dpi=cap["dpi"])
+        S.record_scan(sid, role, roi_mm=actual_roi or roi_mm, dpi=actual_dpi)
         job["result"] = {"role": role, "info": info}
         job["status"] = "done"
         _log(job, f"[scan] {role}: saved.")
@@ -197,8 +202,9 @@ def _run_pipeline_job(job: dict, sid: str):
         rois = meta.get("capture_rois") or {}
         capture_rois = [rois.get(r) for r in S.LEAF_ROLES]
         dpis = meta.get("capture_dpis") or {}
-        capture_dpi = next((dpis.get(r) for r in S.LEAF_ROLES if dpis.get(r)),
-                           cfg["capture"]["dpi"])
+        # per-scan dpi list: geometry placement must honour the dpi each ROI
+        # was actually captured at, not one session-wide value
+        capture_dpi = [dpis.get(r) or cfg["capture"]["dpi"] for r in S.LEAF_ROLES]
 
         res = run_pipeline(
             cfg, scans, S.out_dir(sid),

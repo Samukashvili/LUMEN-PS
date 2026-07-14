@@ -134,6 +134,35 @@ def test_assemble_bed_canvas_places_scans_at_offsets():
     assert np.all(stack[1][0:6, 0:3] == 2)   # b's payload at the origin
 
 
+def test_assemble_bed_canvas_window_matches_full_canvas():
+    """Assembling directly into a window must equal cropping the full canvas."""
+    rng = np.random.default_rng(0)
+    a = rng.random((8, 10)).astype(np.float32)
+    b = rng.random((12, 6)).astype(np.float32)
+    rois = [(2, 1, 10, 8), (0, 3, 6, 12)]
+    dpi = 25.4
+    full, rect = _assemble_bed_canvas([a, b], rois, dpi, scale=1.0)
+    window = (1, 2, 9, 13)
+    win, wrect = _assemble_bed_canvas([a, b], rois, dpi, scale=1.0, window=window)
+    assert wrect == window
+    x0, y0, x1, y1 = window
+    for f, w in zip(full, win):
+        assert np.array_equal(f[y0 - rect[1]:y1 - rect[1],
+                                x0 - rect[0]:x1 - rect[0]], w)
+
+
+def test_assemble_bed_canvas_per_scan_dpi():
+    """A per-scan dpi sequence places each capture at its own mm->px scale."""
+    a = np.ones((4, 4), np.float32)
+    b = np.full((8, 8), 2, np.float32)
+    # same 2mm offset, but b was captured at double the dpi -> double px offset
+    stack, rect = _assemble_bed_canvas([a, b], [(2, 2, 4, 4), (2, 2, 4, 4)],
+                                       [25.4, 50.8], scale=1.0)
+    assert rect == (2, 2, 12, 12)
+    assert np.all(stack[0][0:4, 0:4] == 1)     # a at (2,2) == window origin
+    assert np.all(stack[1][2:10, 2:10] == 2)   # b at (4,4), 2px below/right
+
+
 def test_centered_frame_centers_mask():
     mask = np.zeros((100, 120), bool)
     mask[10:30, 80:110] = True               # off-centre blob

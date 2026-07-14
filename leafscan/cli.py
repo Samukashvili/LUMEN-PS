@@ -98,9 +98,10 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     one; defaults to print). ``auto_crop`` — crop the 4 scans to a common leaf
     ROI before the full-res solve so large scans fit in memory.
     ``capture_rois`` — optional per-scan (x, y, w, h) bed rectangles in mm (None
-    entries = full bed) from the smart-ROI capture; with ``capture_dpi`` they let
-    the pipeline place each ROI capture at its true bed offset so alignment and
-    flat-fielding see consistent geometry.
+    entries = full bed) from the smart-ROI capture; with ``capture_dpi`` (one
+    value or a per-scan sequence) they let the pipeline place each ROI capture
+    at its true bed offset so alignment and flat-fielding see consistent
+    geometry.
     """
     out_dir = Path(out_dir)
     qa_dir = out_dir / "qa"
@@ -160,8 +161,16 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     if have_geometry:
         # Rebuild one bed-coordinate canvas from the per-scan ROI captures so
         # alignment and flat-fielding see the same geometry as full-bed scans.
-        rgb, bed_rect = _assemble_bed_canvas(rgb, rois, capture_dpi, scale)
-        log(f"[crop] placed ROI captures at bed offsets; canvas {rgb[0].shape[:2]}")
+        # With auto_crop the common content window is found first (on coarse
+        # masks, in bed coords), so only that window is ever assembled — the
+        # full-bed union canvas is never allocated.
+        window = None
+        if auto_crop:
+            window = _bed_content_window(rgb, rois, capture_dpi, scale, cfg, lw)
+        rgb, bed_rect = _assemble_bed_canvas(rgb, rois, capture_dpi, scale,
+                                             window=window)
+        log(f"[crop] placed ROI captures at bed offsets; canvas {rgb[0].shape[:2]}"
+            + (" (pre-cropped to common content window)" if window else ""))
     elif len({r.shape[:2] for r in rgb}) > 1:
         rgb = _pad_stack_to_common_canvas(rgb)
         log(f"[crop] normalized variable ROI scans to common canvas {rgb[0].shape[:2]}")
@@ -172,7 +181,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
         log(f"  scan{i}: {sp.name} {native_shapes[i]} -> {rgb[i].shape} "
             f"native={meta['native_dtype']} distinct={meta['distinct_levels']} "
             f"genuine_high_bit={meta['genuine_high_bit']}")
-    variable_roi = have_geometry or len({s[:2] for s in native_shapes}) > 1
+    variable_roi = not have_geometry and len({s[:2] for s in native_shapes}) > 1
     if auto_crop and variable_roi:
         canvas_box = _common_content_bbox(luma, cfg)
         log(f"[crop] common ROI x[{canvas_box[0]},{canvas_box[1]}] "
@@ -456,33 +465,76 @@ def _pad_stack_to_common_canvas(stack):
     return out
 
 
-def _assemble_bed_canvas(stack, rois_mm, dpi, scale):
-    """Place ROI captures at their true bed offsets on one shared canvas.
+def _scan_bed_offsets(rois_mm, dpi, scale):
+    """Per-scan (x, y) placement in scaled full-bed pixels.
 
-    ``rois_mm[i]`` is the (x, y, w, h) glass rectangle scan i was captured from
-    (None = full bed, offset 0). Returns ``(new_stack, bed_rect)`` where
-    ``bed_rect = (x0, y0, x1, y1)`` is the canvas extent in *scaled* full-bed
-    pixels — usable to crop a full-bed flat scan onto the same canvas.
+    ``dpi`` is one value for all scans or a per-scan sequence (captures can be
+    made at different dpi settings).
     """
-    px_per_mm = float(dpi) / 25.4 * float(scale)
+    dpis = list(dpi) if isinstance(dpi, (list, tuple)) else [dpi] * len(rois_mm)
     offs = []
-    for roi in rois_mm:
+    for roi, d in zip(rois_mm, dpis):
+        px_per_mm = float(d) / 25.4 * float(scale)
         x = float(roi[0]) if roi else 0.0
         y = float(roi[1]) if roi else 0.0
         offs.append((int(round(x * px_per_mm)), int(round(y * px_per_mm))))
-    x0 = min(o[0] for o in offs)
-    y0 = min(o[1] for o in offs)
-    x1 = max(o[0] + a.shape[1] for o, a in zip(offs, stack))
-    y1 = max(o[1] + a.shape[0] for o, a in zip(offs, stack))
-    out = []
-    for arr, (ox, oy) in zip(stack, offs):
-        top, left = oy - y0, ox - x0
-        pad = ((top, (y1 - y0) - arr.shape[0] - top),
-               (left, (x1 - x0) - arr.shape[1] - left))
-        if arr.ndim == 3:
-            pad += ((0, 0),)
-        out.append(np.pad(arr, pad, mode="edge"))
+    return offs
+
+
+def _assemble_bed_canvas(stack, rois_mm, dpi, scale, window=None):
+    """Place ROI captures at their true bed offsets on one shared canvas.
+
+    ``rois_mm[i]`` is the (x, y, w, h) glass rectangle scan i was captured from
+    (None = full bed, offset 0). ``window`` optionally restricts the canvas to a
+    (x0, y0, x1, y1) rect in scaled full-bed pixels so only the region of
+    interest is ever allocated. Returns ``(new_stack, bed_rect)`` where
+    ``bed_rect = (x0, y0, x1, y1)`` is the canvas extent in scaled full-bed
+    pixels — usable to crop a full-bed flat scan onto the same canvas.
+    """
+    offs = _scan_bed_offsets(rois_mm, dpi, scale)
+    if window is None:
+        x0 = min(o[0] for o in offs)
+        y0 = min(o[1] for o in offs)
+        x1 = max(o[0] + a.shape[1] for o, a in zip(offs, stack))
+        y1 = max(o[1] + a.shape[0] for o, a in zip(offs, stack))
+    else:
+        x0, y0, x1, y1 = window
+    out = [_crop_bed_rect(arr, (x0 - ox, y0 - oy, x1 - ox, y1 - oy))
+           for arr, (ox, oy) in zip(stack, offs)]
     return out, (x0, y0, x1, y1)
+
+
+def _bed_content_window(stack, rois_mm, dpi, scale, cfg, lw,
+                        coarse=0.25, margin_frac=0.04):
+    """Union bbox of the segmented subject across ROI captures, in scaled
+    full-bed pixels, padded by a margin and clamped to the captured extent.
+
+    Segmentation runs on coarse copies of the raw captures (before any canvas
+    assembly), so the common crop costs one cheap pass instead of full-res
+    Otsu over padded full-bed canvases.
+    """
+    offs = _scan_bed_offsets(rois_mm, dpi, scale)
+    kw = _mask_kw(cfg)
+    ext_x0 = min(o[0] for o in offs)
+    ext_y0 = min(o[1] for o in offs)
+    ext_x1 = max(o[0] + a.shape[1] for o, a in zip(offs, stack))
+    ext_y1 = max(o[1] + a.shape[0] for o, a in zip(offs, stack))
+    x0 = y0 = 1e18
+    x1 = y1 = -1e18
+    for arr, (ox, oy) in zip(stack, offs):
+        small = io.downscale(arr, coarse)
+        mask = align.segment_leaf(io.to_luminance(small, lw), **kw)
+        ys, xs = np.nonzero(mask)
+        if xs.size == 0:
+            continue
+        s = arr.shape[1] / small.shape[1]
+        x0 = min(x0, ox + xs.min() * s); x1 = max(x1, ox + (xs.max() + 1) * s)
+        y0 = min(y0, oy + ys.min() * s); y1 = max(y1, oy + (ys.max() + 1) * s)
+    if x1 < x0:  # nothing segmented anywhere -> full captured extent
+        return (ext_x0, ext_y0, ext_x1, ext_y1)
+    m = int(round(margin_frac * max(ext_x1 - ext_x0, ext_y1 - ext_y0)))
+    return (max(ext_x0, int(x0) - m), max(ext_y0, int(y0) - m),
+            min(ext_x1, int(x1) + m), min(ext_y1, int(y1) + m))
 
 
 def _crop_bed_rect(arr, rect):

@@ -187,20 +187,43 @@ def rigid_align(
     return warped_luma, warped_extra, theta, method
 
 
+def _warped_mask_iou(ref_mask, mov_mask, M):
+    """Overlap of mov_mask warped by the forward transform M against ref_mask."""
+    H, W = ref_mask.shape
+    wm = cv2.warpAffine(mov_mask.astype(np.uint8), M, (W, H),
+                        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=0) > 0
+    union = (ref_mask | wm).sum()
+    return (ref_mask & wm).sum() / union if union else 0.0
+
+
 def _ecc_refine_on_dt(ref_mask, mov_mask, M_init, iters=200, eps=1e-5):
-    """Refine a Euclidean warp using ECC on mask distance transforms (lighting-free)."""
+    """Refine a Euclidean warp using ECC on mask distance transforms (lighting-free).
+
+    ``findTransformECC`` estimates the BACKWARD map (template -> input, i.e.
+    ref -> mov, the matrix warpAffine would take with WARP_INVERSE_MAP), while
+    the pipeline applies transforms FORWARD (mov -> ref). Seed it with the
+    inverse of the forward init and invert its result back; mixing the two
+    conventions "converges" on near-symmetric masks but lands the subject far
+    off. The refinement is only accepted when it does not reduce mask overlap.
+    """
     def dt(m):
         d = cv2.distanceTransform((m.astype(np.uint8) * 255), cv2.DIST_L2, 3)
         return (d / (d.max() + 1e-8)).astype(np.float32)
 
     tref, tmov = dt(ref_mask), dt(mov_mask)
-    warp = M_init.astype(np.float32).copy()
+    init = cv2.invertAffineTransform(M_init.astype(np.float32)).astype(np.float32)
     crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, iters, eps)
     try:
-        _, warp = cv2.findTransformECC(tref, tmov, warp, cv2.MOTION_EUCLIDEAN, crit, None, 5)
-        return warp
+        _, warp = cv2.findTransformECC(tref, tmov, init, cv2.MOTION_EUCLIDEAN,
+                                       crit, None, 5)
     except cv2.error:
         return None
+    M = cv2.invertAffineTransform(warp).astype(np.float32)
+    if _warped_mask_iou(ref_mask, mov_mask, M) < \
+            _warped_mask_iou(ref_mask, mov_mask, M_init):
+        return None
+    return M
 
 
 # --------------------------------------------------------------------------- #

@@ -149,10 +149,19 @@ def scan_to_file(
 
     info = {
         "dpi": (_get(item, WIA_IPS_XRES), _get(item, WIA_IPS_YRES)),
+        "pos_px": (_get(item, WIA_IPS_XPOS), _get(item, WIA_IPS_YPOS)),
         "size_px": (_get(item, WIA_IPS_XEXTENT), _get(item, WIA_IPS_YEXTENT)),
         "depth": _get(item, WIA_IPA_DEPTH),
         "datatype": _get(item, WIA_IPA_DATATYPE),
     }
+    # The driver snaps positions/extents (this HP rounds extents up to a
+    # multiple of 8 px). Report the glass rectangle it ACTUALLY scanned so
+    # callers can place the capture at its true bed offset.
+    xres, yres = (float(info["dpi"][0]), float(info["dpi"][1]))
+    info["roi_mm_actual"] = (
+        info["pos_px"][0] * 25.4 / xres, info["pos_px"][1] * 25.4 / yres,
+        info["size_px"][0] * 25.4 / xres, info["size_px"][1] * 25.4 / yres,
+    )
     if verbose:
         print(f"[capture] dpi={info['dpi']} size_px={info['size_px']} "
               f"depth={info['depth']} datatype={info['datatype']}")
