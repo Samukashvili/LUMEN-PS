@@ -355,6 +355,14 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     if trim_px > 0:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (trim_px * 2 + 1,) * 2)
         core = cv2.erode(solved.astype(np.uint8), k).astype(bool)
+    smooth_px = int(ecfg.get("smooth_px", 3))
+    if smooth_px > 0:
+        # de-ragged silhouette: per-scan shadow direction jitters the mask
+        # boundary pixel-by-pixel; close+open regularises the outline. Runs
+        # before the interior fill so every alpha pixel still receives data.
+        k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (smooth_px * 2 + 1,) * 2)
+        u = cv2.morphologyEx(core.astype(np.uint8), cv2.MORPH_CLOSE, k)
+        core = cv2.morphologyEx(u, cv2.MORPH_OPEN, k).astype(bool)
 
     # Cut the alpha at `core` and DO NOT extend data past it: nearest-valid fill
     # produces radial streaks at the silhouette (the "stretch" artifact), so we

@@ -12,7 +12,7 @@ import numpy as np
 from leafscan import align
 
 
-def _board_scene(H=360, W=440):
+def _board_scene(H=360, W=440, speckle=False):
     """Off-centre rectangular 'board' with an asymmetric notch (so orientation
     is observable) on a bright background."""
     mask = np.zeros((H, W), bool)
@@ -22,6 +22,10 @@ def _board_scene(H=360, W=440):
     luma[mask] = 0.15
     yy, xx = np.mgrid[0:H, 0:W]
     luma += 0.02 * np.sin(xx / 7.0) * mask  # some surface texture
+    if speckle:                            # feature-rich albedo (pads/print)
+        rng = np.random.default_rng(7)
+        for x, y in zip(rng.integers(95, 345, 250), rng.integers(105, 235, 250)):
+            luma[y - 2:y + 3, x - 2:x + 3] = 0.7
     return luma.astype(np.float32), mask
 
 
@@ -56,6 +60,32 @@ def test_rigid_align_rect_board_all_rotations():
         assert iou > 0.97, f"scan{k}: IoU {iou:.3f} via {method}"
         err = abs(((theta - 90 * k + 180) % 360) - 180)
         assert err < 2.0, f"scan{k}: theta {theta:.2f} via {method}"
+
+
+def test_feature_refine_fixes_shadow_biased_masks():
+    """When the segmentation mask carries a one-sided shadow fringe, the
+    centroid/outline stages misplace the subject by a few px; the feature
+    stage must recover sub-2px accuracy from interior texture."""
+    luma, mask = _board_scene(speckle=True)
+    ref_luma, ref_mask = _rotated_scan(luma, mask, 0)
+    mov_luma, mov_mask = _rotated_scan(luma, mask, 1, shift=(7, -4))
+    # one-sided shadow fringe: fattens the mask and biases its centroid
+    biased = mov_mask | np.roll(mov_mask, 10, axis=1)
+
+    def run(feature_refine):
+        cfg = {"fiducials": {"enabled": False},
+               "rigid": {"nominal_step_deg": 90.0, "ecc_refine": False,
+                         "feature_refine": feature_refine}}
+        warped, _, _, method = align.rigid_align(
+            ref_luma, mov_luma, [mov_mask], 1,
+            ref_mask=ref_mask, mov_mask=biased, cfg=cfg)
+        m = ref_mask & (warped > 0)
+        return float(np.abs(warped - ref_luma)[m].mean()), method
+
+    e_off, _ = run(False)
+    e_on, method = run(True)
+    assert "feat" in method, method
+    assert e_on < e_off * 0.6, (e_on, e_off)
 
 
 def test_ecc_refine_never_degrades_nominal():

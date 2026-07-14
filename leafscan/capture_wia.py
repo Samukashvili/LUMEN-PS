@@ -237,6 +237,15 @@ def detect_content_roi_mm(
     radius = max(1, int(round(min(h, w) * 0.004)))
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius * 2 + 1, radius * 2 + 1))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    # The bed's physical edges leave dark artifacts hugging the preview border
+    # (calibration strip, lid seam, edge shadow). Unioning one of those slivers
+    # drags the ROI out to the full bed, so the detail scan keeps going long
+    # after the subject. The border band is also where the background colour
+    # was sampled, so nothing in it is trustworthy content anyway — blank it.
+    mask[:edge] = 0
+    mask[-edge:] = 0
+    mask[:, :edge] = 0
+    mask[:, -edge:] = 0
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     min_area = max(24, int(round(h * w * min_component_fraction)))
     keep = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= min_area]

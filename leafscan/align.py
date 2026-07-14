@@ -172,6 +172,16 @@ def rigid_align(
                 M = refined
                 method += "+ecc"
 
+        # Sub-pixel touch-up from sparse albedo features (§6.3). The mask
+        # outline that drives ECC carries directional shadow fringes, so it
+        # bottoms out at a few px; interior texture matches do not. Runs last
+        # so its sub-pixel result is what gets applied.
+        if rcfg.get("feature_refine", True) and ref_mask is not None and mov_mask is not None:
+            refined = _feature_refine(ref_luma, mov_luma, ref_mask, mov_mask, M, rcfg)
+            if refined is not None:
+                M = refined
+                method += "+feat"
+
     theta = float(np.rad2deg(np.arctan2(M[1, 0], M[0, 0])))
     interp = cv2.INTER_LANCZOS4 if cfg.get("rigid", {}).get(
         "interpolation", "lanczos4") == "lanczos4" else cv2.INTER_CUBIC
@@ -224,6 +234,142 @@ def _ecc_refine_on_dt(ref_mask, mov_mask, M_init, iters=200, eps=1e-5):
             _warped_mask_iou(ref_mask, mov_mask, M_init):
         return None
     return M
+
+
+def _compose_affine(A, B):
+    """2x3 affine composition A∘B (apply B first, then A)."""
+    A3 = np.vstack([A, [0.0, 0.0, 1.0]])
+    B3 = np.vstack([B, [0.0, 0.0, 1.0]])
+    return (A3 @ B3)[:2].astype(np.float32)
+
+
+def _feature_u8(luma, mask):
+    """Contrast-normalised u8 view of the subject for feature detection."""
+    hi = np.percentile(luma[mask], 99.5) if mask.any() else luma.max()
+    u8 = np.clip(luma / (hi + 1e-8) * 255, 0, 255).astype(np.uint8)
+    return cv2.createCLAHE(2.0, (8, 8)).apply(u8)
+
+
+def _feature_refine(ref_luma, mov_luma, ref_mask, mov_mask, M_init, rcfg):
+    """Rigid correction from sparse feature matches, iterated to convergence.
+
+    Lighting differs by design between scans, but sharp albedo texture
+    (silkscreen, print, veins, board edges) survives it. Each pass pre-warps
+    the moving scan by the current estimate so descriptors see one orientation
+    and matches can be gated to a small displacement budget — which also rules
+    out lattice slips on periodic textures. The gate clips far-from-centre
+    matches of a large rotation error, so a single pass under-corrects;
+    iterating recovers the full rotation a step at a time. Returns the
+    composed forward transform, or None when no pass found a reliable
+    consensus (feature-poor subjects fall back to the ECC/nominal result).
+    """
+    M = M_init
+    for _ in range(int(rcfg.get("feature_iters", 3))):
+        step = _feature_refine_once(ref_luma, mov_luma, ref_mask, mov_mask, M, rcfg)
+        if step is None:
+            break
+        M, moved_px = step
+        if moved_px < 0.3:
+            break
+    return None if M is M_init else M
+
+
+def _feature_refine_once(ref_luma, mov_luma, ref_mask, mov_mask, M_init, rcfg):
+    """One matching pass. Returns (new forward transform, correction px at the
+    match centroid) or None when the pass found nothing acceptable."""
+    H, W = ref_luma.shape
+    gate = max(8.0, float(rcfg.get("feature_gate_frac", 0.01)) * max(H, W))
+    min_inliers = int(rcfg.get("feature_min_inliers", 12))
+
+    wl = cv2.warpAffine(mov_luma, M_init, (W, H), flags=cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    wm = cv2.warpAffine(mov_mask.astype(np.uint8), M_init, (W, H),
+                        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=0) > 0
+
+    # keep detections off the boundary: the silhouette fringe moves with the
+    # per-scan shadow direction and would pollute the consensus
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    rm = cv2.erode(ref_mask.astype(np.uint8), k) * 255
+    mm = cv2.erode(wm.astype(np.uint8), k) * 255
+    if not rm.any() or not mm.any():
+        return None
+
+    orb = cv2.ORB_create(nfeatures=int(rcfg.get("feature_count", 5000)),
+                         fastThreshold=10)
+    kp_r, des_r = orb.detectAndCompute(_feature_u8(ref_luma, ref_mask), rm)
+    kp_m, des_m = orb.detectAndCompute(_feature_u8(wl, wm), mm)
+    if des_r is None or des_m is None or len(kp_r) < min_inliers or len(kp_m) < min_inliers:
+        return None
+
+    matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+    pairs = matcher.knnMatch(des_m, des_r, k=2)
+    src, dst = [], []
+    for pair in pairs:
+        if len(pair) < 2 or pair[0].distance >= 0.75 * pair[1].distance:
+            continue
+        p_m = np.array(kp_m[pair[0].queryIdx].pt)
+        p_r = np.array(kp_r[pair[0].trainIdx].pt)
+        if np.linalg.norm(p_m - p_r) <= gate:
+            src.append(p_m); dst.append(p_r)
+    if len(src) < min_inliers:
+        return None
+
+    src = np.asarray(src, np.float32); dst = np.asarray(dst, np.float32)
+    dM, inl = cv2.estimateAffinePartial2D(src, dst, method=cv2.RANSAC,
+                                          ransacReprojThreshold=3.0)
+    if dM is None or inl is None or int(inl.sum()) < min_inliers:
+        return None
+
+    # the scanner cannot change scale: reject a degenerate fit, then strip the
+    # residual scale while preserving the mapping at the inlier centroid
+    s = float(np.sqrt(abs(np.linalg.det(dM[:, :2]))))
+    if not (0.98 <= s <= 1.02):
+        return None
+    c = src[inl.ravel() > 0].mean(axis=0)
+    A = dM[:, :2] / s
+    t = (dM[:, :2] @ c + dM[:, 2]) - A @ c
+    dM = np.hstack([A, t[:, None]]).astype(np.float32)
+    moved_px = float(np.linalg.norm(t + (A - np.eye(2)) @ c))
+    if moved_px > 1.5 * gate:
+        return None
+
+    M = _compose_affine(dM, M_init)
+    # never trade away silhouette agreement for texture agreement
+    if _warped_mask_iou(ref_mask, mov_mask, M) < \
+            _warped_mask_iou(ref_mask, mov_mask, M_init) - 0.02:
+        return None
+    # decisive check: the correction must measurably improve dense high-pass
+    # agreement, not just its own inlier set. A spatially clustered RANSAC
+    # consensus can tilt the rotation while every match stays within budget;
+    # that shows up immediately as worse high-pass alignment.
+    if _highpass_err(ref_luma, ref_mask, mov_luma, mov_mask, M) > \
+            0.998 * _highpass_err(ref_luma, ref_mask, mov_luma, mov_mask, M_init):
+        return None
+    return M, moved_px
+
+
+def _highpass_err(ref_luma, ref_mask, mov_luma, mov_mask, M, sigma=4.0):
+    """Mean |high-pass| disagreement of mov warped by M against ref.
+
+    High-pass first, warp second: shading gradients (the photometric signal)
+    live in the low band, so this compares texture alignment, not lighting.
+    """
+    H, W = ref_luma.shape
+
+    def hp(l):
+        return l - cv2.GaussianBlur(l, (0, 0), sigma)
+
+    wl = cv2.warpAffine(hp(mov_luma), M, (W, H), flags=cv2.INTER_LINEAR,
+                        borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    wm = cv2.warpAffine(mov_mask.astype(np.uint8), M, (W, H),
+                        flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,
+                        borderValue=0) > 0
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    m = cv2.erode((ref_mask & wm).astype(np.uint8), k) > 0
+    if not m.any():
+        return np.inf
+    return float(np.abs(hp(ref_luma) - wl)[m].mean())
 
 
 # --------------------------------------------------------------------------- #

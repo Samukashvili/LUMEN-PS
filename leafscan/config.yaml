@@ -46,6 +46,16 @@ align:
     interpolation: "lanczos4"     # lanczos4 | cubic
     nominal_step_deg: 90.0        # fallback de-rotation when fiducials absent
     ecc_refine: true              # refine fallback with ECC on the mask
+    feature_refine: true          # final sub-px touch-up from sparse albedo
+                                  # feature matches (ORB+RANSAC); mask edges
+                                  # carry directional shadows, texture doesn't
+    feature_gate_frac: 0.01       # max match displacement as fraction of the
+                                  # image size (also blocks periodic-texture
+                                  # lattice slips)
+    feature_min_inliers: 12       # give up (keep ECC/nominal) below this
+    feature_count: 5000           # ORB keypoint budget per scan
+    feature_iters: 3              # re-match passes; the displacement gate
+                                  # clips big rotations, iterating recovers them
   nonrigid:
     enabled: true
     proxy: "mask_dt+veins"        # 'mask_dt' | 'veins' | 'mask_dt+veins'
@@ -92,6 +102,8 @@ output:
   edge:                           # boundary cleanup (kills the white halo + warp stretch)
     trim_px: 6                    # erode the solved region to drop the mixed leaf/bg ring;
                                   # the leaf boundary is then filled from clean interior
+    smooth_px: 3                  # close+open the silhouette: per-scan shadow
+                                  # direction jitters the mask edge pixel-by-pixel
     pad_px: 0                     # texture padding OUTSIDE the leaf silhouette. 0 = none
                                   # (for cutouts on a transparent plane). Raise for meshes
                                   # that need mip-bleed padding (future UI toggle).
