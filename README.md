@@ -95,6 +95,14 @@ The four captures above are shown exactly as the scanner delivered them: the **f
 
 Every drilled hole resolves as an individual dimple in the normal map, the silkscreen grid sits flat where it should, and the height panel (contrast-mapped from the 16-bit original) shows the shallow board warp plus per-hole relief. Re-render residual means for the four scans were **0.0070–0.0131** on normalized linear intensity, from `sessions/pcb-scan-20260714-194232/out`. The usual caution stands: this board is light and smooth, but any rigid object can scratch the platen — never press one down with the lid.
 
+<div align="center">
+
+<img src="docs/assets/pcb-relight.gif" width="520" alt="Recovered prototype PCB relit through a full 360 degree light orbit">
+
+*The recovered PCB relit through 360°, rendered with the interactive viewer's shading — `albedo × (ambient + max(N·L, 0))` — every hole and solder pad responding to the orbiting light.*
+
+</div>
+
 ## Why it works
 
 For a mostly matte (Lambertian) point, brightness under light `k` is approximately:
