@@ -50,10 +50,10 @@ export function streamJob(sid, onLog, onStatus, from = 0) {
     ws.onmessage = (e) => {
       let m;
       try { m = JSON.parse(e.data); } catch { return; }
+      retry = 0;   // valid traffic proves the reconnected stream is healthy
       if (m.type === 'log') { cursor += m.lines.length; onLog(m.lines); }
       else if (m.type === 'status') { stopped = true; onStatus(m); }
     };
-    ws.onopen = () => { retry = 0; };
     ws.onerror = () => {};   // an error surfaces as a close; reconnect is handled there
     ws.onclose = () => {
       if (stopped) return;   // job finished or caller closed — expected, don't retry

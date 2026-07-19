@@ -288,8 +288,9 @@ async def ws_stream(ws: WebSocket, sid: str):
             if job:
                 lines = job["log"]
                 if idx < len(lines):
-                    await ws.send_json({"type": "log", "lines": lines[idx:]})
-                    idx = len(lines)
+                    batch = lines[idx:]
+                    idx += len(batch)
+                    await ws.send_json({"type": "log", "lines": batch})
                 if job["status"] in ("done", "error", "cancelled"):
                     await ws.send_json({"type": "status", "status": job["status"],
                                         "kind": job["kind"], "result": job["result"],

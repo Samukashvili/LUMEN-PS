@@ -1,9 +1,11 @@
+import asyncio
 import io
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
+import leafscan.web.app as web_app
 from leafscan.web import sessions
 from leafscan.web.app import _serve_image
 
@@ -19,6 +21,46 @@ def test_16bit_height_preview_preserves_tonal_range(tmp_path: Path):
     assert preview.min() < 5
     assert preview.max() > 245
     assert np.unique(preview).size > 100
+
+
+def test_job_stream_does_not_skip_log_appended_during_send(monkeypatch):
+    job = {
+        "status": "running",
+        "kind": "run",
+        "log": ["first"],
+        "result": None,
+        "error": None,
+    }
+
+    class FakeWebSocket:
+        query_params = {"from": "0"}
+
+        def __init__(self):
+            self.messages = []
+
+        async def accept(self):
+            pass
+
+        async def send_json(self, message):
+            self.messages.append(message)
+            if message.get("type") == "log" and message["lines"] == ["first"]:
+                job["log"].append("second")
+
+        async def close(self):
+            pass
+
+    async def advance_job(delay):
+        if delay == 0.15:
+            job["status"] = "done"
+
+    ws = FakeWebSocket()
+    monkeypatch.setattr(web_app.jobs, "get_job", lambda sid: job)
+    monkeypatch.setattr(web_app.asyncio, "sleep", advance_job)
+
+    asyncio.run(web_app.ws_stream(ws, "session"))
+
+    log_batches = [message["lines"] for message in ws.messages if message["type"] == "log"]
+    assert log_batches == [["first"], ["second"]]
 
 
 def test_session_can_use_external_output_directory(tmp_path: Path, monkeypatch):
