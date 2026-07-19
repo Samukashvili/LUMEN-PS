@@ -32,14 +32,40 @@ export const api = {
 };
 
 // Stream a job's log. onLog(lines[]), onStatus({status,result,error}). Returns a closer.
+//
+// The job keeps running server-side even if this socket drops, and the server
+// tails the log by index, so a dropped connection reconnects from the last line
+// already received (with backoff) instead of freezing the log + progress. Retrying
+// stops once a terminal status arrives or the caller closes the stream.
 export function streamJob(sid, onLog, onStatus, from = 0) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/api/sessions/${sid}/stream?from=${from}`);
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.type === 'log') onLog(m.lines);
-    else if (m.type === 'status') onStatus(m);
+  let cursor = from;     // log index reached so far — the resume point after a drop
+  let ws = null;
+  let retry = 0;
+  let timer = null;
+  let stopped = false;   // terminal status received, or caller closed
+
+  function connect() {
+    ws = new WebSocket(`${proto}://${location.host}/api/sessions/${sid}/stream?from=${cursor}`);
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; }
+      retry = 0;   // valid traffic proves the reconnected stream is healthy
+      if (m.type === 'log') { cursor += m.lines.length; onLog(m.lines); }
+      else if (m.type === 'status') { stopped = true; onStatus(m); }
+    };
+    ws.onerror = () => {};   // an error surfaces as a close; reconnect is handled there
+    ws.onclose = () => {
+      if (stopped) return;   // job finished or caller closed — expected, don't retry
+      timer = setTimeout(connect, Math.min(500 * 2 ** retry, 8000));
+      retry += 1;
+    };
+  }
+  connect();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    try { ws && ws.close(); } catch (_) {}
   };
-  ws.onerror = () => {};
-  return () => { try { ws.close(); } catch (_) {} };
 }
