@@ -20,6 +20,7 @@ from .device import _com_init
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lumen")
 _jobs: dict[str, dict] = {}          # sid -> current/last job
 _lock = threading.Lock()
+_shutdown_requested = threading.Event()
 
 
 def get_job(sid: str) -> dict | None:
@@ -28,6 +29,8 @@ def get_job(sid: str) -> dict | None:
 
 
 def _new_job(sid: str, kind: str) -> dict:
+    if _shutdown_requested.is_set():
+        raise RuntimeError("LUMEN-PS is shutting down")
     job = {"sid": sid, "kind": kind, "status": "queued", "log": [], "error": None,
            "result": None, "cancel_requested": threading.Event()}
     with _lock:
@@ -56,8 +59,27 @@ def cancel(sid: str) -> bool:
 
 
 def _check_cancelled(job: dict):
-    if job["cancel_requested"].is_set():
+    if _shutdown_requested.is_set() or job["cancel_requested"].is_set():
         raise CancelledError("Cancelled by user")
+
+
+def shutdown() -> None:
+    """Cancel queued work and terminate Python child processes before exit."""
+    _shutdown_requested.set()
+    with _lock:
+        active = [job for job in _jobs.values()
+                  if job["status"] in ("queued", "running")]
+        for job in active:
+            job["cancel_requested"].set()
+            _log(job, "[shutdown] application shutdown requested...")
+
+    for process in mp.active_children():
+        try:
+            process.terminate()
+            process.join(2)
+        except Exception:
+            pass
+    _executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _scan_transfer_worker(result_queue, out_path, kwargs):

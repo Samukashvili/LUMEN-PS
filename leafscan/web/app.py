@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import io as _io
+import os
+import time
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
-APP_VERSION = "2026.07-smart-roi-v5"
+APP_VERSION = "2026.07-scan-controls-v2"
 
 
 # ---- models ---------------------------------------------------------------- #
@@ -152,6 +154,53 @@ def api_capture(sid: str, body: CaptureReq):
         raise HTTPException(409, "A job is already running for this session")
     job = jobs.start_capture(sid, body.role)
     return {"status": job["status"], "kind": job["kind"]}
+
+
+@app.post("/api/sessions/{sid}/import/{role}")
+def api_import_scan(sid: str, role: str, file: UploadFile = File(...)):
+    """Import an externally captured image into one primary scan slot."""
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if role not in S.LEAF_ROLES:
+        raise HTTPException(400, f"External import is only available for k0-k3, not {role}")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Wait for the active scanner or reconstruction job to finish")
+    try:
+        meta = S.import_scan(sid, role, file.file)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        file.file.close()
+    meta["ready"] = S.ready_to_run(sid)
+    return meta
+
+
+@app.delete("/api/sessions/{sid}/import/{role}")
+def api_remove_imported_scan(sid: str, role: str):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Wait for the active scanner or reconstruction job to finish")
+    try:
+        meta = S.remove_imported_scan(sid, role)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    meta["ready"] = S.ready_to_run(sid)
+    return meta
+
+
+def _shutdown_runtime() -> None:
+    """Stop workers and then terminate this local web-server process."""
+    jobs.shutdown()
+    time.sleep(0.4)
+    os._exit(0)
+
+
+@app.post("/api/shutdown")
+def api_shutdown(background_tasks: BackgroundTasks):
+    # Background tasks begin only after Starlette sends the response body.
+    background_tasks.add_task(_shutdown_runtime)
+    return {"status": "shutting_down"}
 
 
 @app.post("/api/sessions/{sid}/reset-scans")

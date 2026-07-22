@@ -4,7 +4,7 @@ import { Relight } from './relight.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-smart-roi-v5';
+const EXPECTED_BACKEND = '2026.07-scan-controls-v2';
 const STAGES = ['capture', 'process', 'results'];
 const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
   '[valid]': 1, '[calib]': 2, '[solve]': 3, '[integrate]': 4,
@@ -31,6 +31,7 @@ const S = {
   stage: 'capture', relight: null, closeWS: null, log: [],
   jobKind: null, jobStatus: 'idle', jobCursor: 0, jobResult: null,
   processStage: 0, resultMode: 'relight', selectedResult: null,
+  removeImportRole: null,
 };
 
 // ---- helpers --------------------------------------------------------------
@@ -92,6 +93,11 @@ async function boot() {
   $('#new-session-form').addEventListener('submit', newSession);
   $('#reset-scans-cancel').addEventListener('click', closeResetScans);
   $('#reset-scans-confirm').addEventListener('click', resetAllScans);
+  $('#remove-import-cancel').addEventListener('click', closeRemoveImport);
+  $('#remove-import-confirm').addEventListener('click', removeImportedScan);
+  $('#btn-shutdown').addEventListener('click', openShutdown);
+  $('#shutdown-cancel').addEventListener('click', closeShutdown);
+  $('#shutdown-confirm').addEventListener('click', shutdownApp);
   $('#delete-session-cancel').addEventListener('click', closeDeleteSession);
   $('#delete-session-ui').addEventListener('click', () => deleteSession(false));
   $('#delete-session-files').addEventListener('click', () => deleteSession(true));
@@ -145,6 +151,29 @@ function openResetScans() {
   $('#reset-scans-cancel').focus();
 }
 function closeResetScans() { $('#reset-scans-dialog').hidden = true; }
+function openRemoveImport(role) {
+  S.removeImportRole = role;
+  $('#remove-import-description').textContent = `Remove imported ${role}? The other captures will stay in place.`;
+  $('#remove-import-dialog').hidden = false;
+  $('#remove-import-cancel').focus();
+}
+function closeRemoveImport() { $('#remove-import-dialog').hidden = true; S.removeImportRole = null; }
+function openShutdown() { $('#shutdown-dialog').hidden = false; $('#shutdown-cancel').focus(); }
+function closeShutdown() { $('#shutdown-dialog').hidden = true; }
+async function shutdownApp() {
+  const button = $('#shutdown-confirm');
+  button.disabled = true; button.textContent = 'Shutting down...';
+  try {
+    await api.shutdown();
+    if (S.closeWS) { S.closeWS(); S.closeWS = null; }
+    disposeRelight();
+    $('#shutdown-dialog').hidden = true;
+    $('#shutdown-screen').hidden = false;
+  } catch (err) {
+    $('#shutdown-description').textContent = `Could not shut down LUMEN-PS: ${err.message}`;
+    button.disabled = false; button.textContent = 'Try again';
+  }
+}
 function openDeleteSession(meta) {
   S.deleteCandidate = meta;
   $('#delete-session-description').textContent = `Remove “${meta.name}” from Recent sessions, or permanently delete its scans and outputs${meta.output_dir ? ` in ${meta.output_dir}` : ''}.`;
@@ -249,6 +278,17 @@ function renderCapture() {
       <div class="foot-actions"><button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : 'All scans captured'}</button>
       <button class="btn" id="to-process" ${m.ready ? '' : 'disabled'}>Continue to Process &rarr;</button></div></div>`;
   main.querySelectorAll('[data-scan]').forEach(b => b.addEventListener('click', () => doCapture(b.dataset.scan)));
+  main.querySelectorAll('[data-import]').forEach(b => b.addEventListener('click', () => {
+    const input = main.querySelector(`[data-import-file="${b.dataset.import}"]`);
+    if (input) input.click();
+  }));
+  main.querySelectorAll('[data-import-file]').forEach(input => input.addEventListener('change', () => {
+    const file = input.files?.[0];
+    if (file) importScan(input.dataset.importFile, file);
+    input.value = '';
+  }));
+  main.querySelectorAll('[data-remove-import]').forEach(b =>
+    b.addEventListener('click', () => openRemoveImport(b.dataset.removeImport)));
   const sb = $('#scan-btn'); if (next) sb.addEventListener('click', () => doCapture(next)); else sb.disabled = true;
   if (!S.backendCurrent) sb.disabled = true;
   $('#to-process').addEventListener('click', () => gotoStage('process'));
@@ -274,13 +314,47 @@ async function persistCaptureSettings() {
 }
 function slot(role) {
   const done = S.meta.scans[role];
+  const primary = LEAF.includes(role);
+  const imported = (S.meta.capture_sources || {})[role] === 'imported';
   const label = { flat: 'flat-field', calib0: 'calib 0&deg;', calib90: 'calib 90&deg;' }[role] || role;
   const roi = (S.meta.capture_rois || {})[role];
   return `<div class="slot ${done ? 'done' : ''}" id="slot-${role}"><div class="slot-cap"><span>${label}</span>
-    ${roi ? '<span class="slot-mode">ROI</span>' : '<span class="led roleled"></span>'}</div>
+    ${imported ? '<span class="slot-mode slot-mode--imported">IMPORTED</span>' : roi ? '<span class="slot-mode">ROI</span>' : '<span class="led roleled"></span>'}</div>
     <div class="slot-body">${done ? `<img src="${api.scanURL(S.sid, role)}" alt="${role}">
-      <div class="slot-actions"><button class="btn btn--sm" type="button" data-scan="${role}">Rescan ${role}</button></div>`
-      : `<div class="slot-hint">no scan yet<br><button class="btn btn--sm btn--ghost" data-scan="${role}">Scan</button></div>`}</div></div>`;
+      <div class="slot-actions"><button class="btn btn--sm" type="button" data-scan="${role}">Rescan</button>
+        ${primary ? `<button class="btn btn--sm btn--ghost" type="button" data-import="${role}" aria-label="Import ${role} from file">Import</button>` : ''}
+        ${imported ? `<button class="btn btn--sm btn--danger" type="button" data-remove-import="${role}" aria-label="Remove imported ${role}">Remove</button>` : ''}</div>`
+      : `<div class="slot-hint">no scan yet<div class="slot-empty-actions"><button class="btn btn--sm btn--ghost" data-scan="${role}">Scan</button>
+        ${primary ? `<button class="btn btn--sm btn--ghost" type="button" data-import="${role}" aria-label="Import ${role} from file">Import</button>` : ''}</div></div>`}
+      ${primary ? `<input hidden type="file" data-import-file="${role}" accept=".png,.tif,.tiff,.bmp,.jpg,.jpeg,.webp,image/png,image/tiff,image/bmp,image/jpeg,image/webp">` : ''}</div></div>`;
+}
+async function importScan(role, file) {
+  const el = $('#slot-' + role); if (el) { el.classList.add('busy'); el.classList.remove('done'); }
+  disableActions(true); logLine(`[import] loading ${file.name} into ${role}...`);
+  try {
+    await api.importScan(S.sid, role, file);
+    await refreshMeta();
+    logLine(`[import] ${role}: ${file.name} imported.`);
+    renderCapture();
+  } catch (err) {
+    logLine('[error] import failed: ' + err.message);
+    renderCapture();
+  }
+}
+async function removeImportedScan() {
+  const role = S.removeImportRole;
+  if (!role) return;
+  const button = $('#remove-import-confirm');
+  button.disabled = true;
+  try {
+    await api.removeImportedScan(S.sid, role);
+    closeRemoveImport();
+    await refreshMeta();
+    logLine(`[import] ${role}: imported scan removed.`);
+    renderCapture();
+  } catch (err) {
+    $('#remove-import-description').textContent = `Could not remove ${role}: ${err.message}`;
+  } finally { button.disabled = false; }
 }
 async function doCapture(role) {
   if (!S.backendCurrent) {

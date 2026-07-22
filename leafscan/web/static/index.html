@@ -19,8 +19,13 @@
     <span class="mark">LUMEN&#8209;PS</span>
     <span class="model">MODEL&nbsp;PS&#8209;4 · PHOTOMETRIC STEREO BENCH</span>
   </div>
-  <div id="device-pill" class="pill pill--idle" title="Scanner status">
-    <span class="led"></span><span class="pill-text">probing scanner…</span>
+  <div class="topbar-actions">
+    <div id="device-pill" class="pill pill--idle" title="Scanner status">
+      <span class="led"></span><span class="pill-text">probing scanner…</span>
+    </div>
+    <button id="btn-shutdown" class="shutdown-btn" type="button" title="Shut down LUMEN-PS">
+      <span aria-hidden="true">&#9211;</span><span>Shut down</span>
+    </button>
   </div>
 </header>
 
@@ -76,6 +81,42 @@
     </div>
   </div>
 </div>
+
+<div id="remove-import-dialog" class="modal-backdrop" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-import-title"
+       aria-describedby="remove-import-description">
+    <div class="eyebrow">Imported scan</div>
+    <h2 id="remove-import-title">Remove this scan?</h2>
+    <p id="remove-import-description">Only this imported scan will be removed. The other three captures stay in place.</p>
+    <div class="modal-actions">
+      <button id="remove-import-cancel" class="btn btn--ghost" type="button">Keep scan</button>
+      <button id="remove-import-confirm" class="btn btn--danger" type="button">Remove scan</button>
+    </div>
+  </div>
+</div>
+
+<div id="shutdown-dialog" class="modal-backdrop" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="shutdown-title"
+       aria-describedby="shutdown-description">
+    <div class="eyebrow">Bench power</div>
+    <h2 id="shutdown-title">Shut down LUMEN-PS?</h2>
+    <p id="shutdown-description">The web server and every active scan or reconstruction process will stop. Run <b>run.bat</b> to start the bench again.</p>
+    <div class="modal-actions">
+      <button id="shutdown-cancel" class="btn btn--ghost" type="button">Keep running</button>
+      <button id="shutdown-confirm" class="btn btn--danger" type="button">Shut down</button>
+    </div>
+  </div>
+</div>
+
+<section id="shutdown-screen" class="shutdown-screen" hidden aria-live="polite">
+  <div class="shutdown-core">
+    <div class="shutdown-symbol" aria-hidden="true">&#9211;</div>
+    <div class="eyebrow">Bench offline</div>
+    <h1>LUMEN&#8209;PS is shut down</h1>
+    <p>All scanner and reconstruction processes have been stopped. You can close this tab safely.</p>
+    <small>Run <b>run.bat</b> when you want to start the bench again.</small>
+  </div>
+</section>
 
 <div id="delete-session-dialog" class="modal-backdrop" hidden>
   <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-session-title">

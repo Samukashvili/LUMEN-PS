@@ -8,6 +8,15 @@ const J = (m, url, body) => fetch(url, {
   return r.json();
 });
 
+const upload = (url, file) => {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  return fetch(url, { method: 'POST', body }).then(async r => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+    return r.json();
+  });
+};
+
 export const api = {
   version: () => J('GET', '/api/version'),
   device: () => J('GET', '/api/device'),
@@ -20,10 +29,13 @@ export const api = {
   chooseOutputDir: () => J('POST', '/api/choose-output-dir'),
   deleteSession: (sid, deleteFiles) => J('DELETE', `/api/sessions/${sid}`, { delete_files: deleteFiles }),
   capture: (sid, role) => J('POST', `/api/sessions/${sid}/capture`, { role }),
+  importScan: (sid, role, file) => upload(`/api/sessions/${sid}/import/${role}`, file),
+  removeImportedScan: (sid, role) => J('DELETE', `/api/sessions/${sid}/import/${role}`),
   resetScans: (sid) => J('POST', `/api/sessions/${sid}/reset-scans`),
   run: (sid) => J('POST', `/api/sessions/${sid}/run`),
   job: (sid) => J('GET', `/api/sessions/${sid}/job`),
   cancelJob: (sid) => J('POST', `/api/sessions/${sid}/job/cancel`),
+  shutdown: () => J('POST', '/api/shutdown'),
   results: (sid) => J('GET', `/api/sessions/${sid}/results`),
   scanURL: (sid, role, max = 1000) => `/api/sessions/${sid}/scan/${role}?max=${max}&t=${Date.now()}`,
   resultURL: (sid, name, max = 0) => `/api/sessions/${sid}/result/${name}?max=${max}&t=${Date.now()}`,

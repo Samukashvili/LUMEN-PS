@@ -44,6 +44,7 @@ button{font-family:inherit}
   padding:0 20px; background:linear-gradient(180deg,#100E0B,#0B0B0C);
   border-bottom:1px solid var(--line)}
 .brand{display:flex; align-items:baseline; gap:14px}
+.topbar-actions{display:flex;align-items:center;gap:9px}
 .mark{font-family:var(--disp); font-weight:700; font-size:19px; letter-spacing:.06em;
   color:var(--amber); text-shadow:var(--glow)}
 .model{font-family:var(--mono); font-size:10px; letter-spacing:.18em; color:var(--dim)}
@@ -57,6 +58,11 @@ button{font-family:inherit}
 .pill--ok .led{background:var(--ok); color:var(--ok)}
 .pill--err .led{background:var(--err); color:var(--err)}
 .pill--idle .led{animation:pulse 1.3s infinite}
+.shutdown-btn{display:inline-flex;align-items:center;gap:7px;appearance:none;cursor:pointer;
+  height:30px;padding:0 10px;border:1px solid #51302b;border-radius:100px;background:#160e0d;
+  color:#d98f88;font-family:var(--mono);font-size:10px;letter-spacing:.05em}
+.shutdown-btn:hover{border-color:var(--err);color:#ffd0cc;box-shadow:0 0 12px rgba(255,107,107,.15)}
+.shutdown-btn:focus-visible{outline:2px solid var(--err);outline-offset:2px}
 @keyframes pulse{50%{opacity:.3}}
 
 /* ---- buttons ------------------------------------------------------------- */
@@ -121,6 +127,13 @@ button{font-family:inherit}
   color:var(--dim); letter-spacing:.08em; text-transform:uppercase}
 .modal input{width:100%}
 .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:18px}
+.shutdown-screen{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:24px;
+  background:radial-gradient(circle at 50% 42%,#17120d 0,#090807 52%,#050505 100%)}
+.shutdown-core{width:min(520px,92vw);text-align:center}
+.shutdown-symbol{margin:0 auto 18px;color:var(--amber-deep);font-size:54px;line-height:1}
+.shutdown-core h1{margin:7px 0 10px;font-family:var(--disp);color:var(--amber);font-size:30px}
+.shutdown-core p{margin:0 auto 20px;max-width:48ch;color:var(--dim)}
+.shutdown-core small{font-family:var(--mono);color:var(--dim)}
 
 /* ---- shell grid ---------------------------------------------------------- */
 .shell{position:fixed; inset:52px 0 0 0; display:grid;
@@ -219,6 +232,7 @@ button{font-family:inherit}
 .capture-readout span{font-family:var(--mono); font-size:9px; text-transform:uppercase;
   letter-spacing:.14em; color:var(--dim)}
 .slot-mode{font-size:8px; color:var(--ok); border:1px solid #274b38; padding:1px 5px; border-radius:100px}
+.slot-mode--imported{color:var(--amber);border-color:var(--amber-deep)}
 .scan-grid--optional{grid-template-columns:repeat(3,minmax(130px,1fr)); max-width:720px}
 
 .scan-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
@@ -231,15 +245,20 @@ button{font-family:inherit}
 .slot.done{border-style:solid; border-color:#274b38}
 .slot.busy{border-style:solid; border-color:var(--amber); box-shadow:var(--glow)}
 .slot-cap{display:flex; align-items:center; justify-content:space-between;
-  padding:8px 10px; font-family:var(--mono); font-size:11px; border-bottom:1px solid var(--line)}
-.slot-body{flex:1; display:grid; place-items:center; color:var(--dim); position:relative}
-.slot-body img{width:100%; height:100%; object-fit:cover; object-position:center}
-.slot-actions{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;
-  padding:22px 8px 9px;background:linear-gradient(transparent,rgba(8,7,5,.92));
-  opacity:.9;transition:.15s ease}
+  position:relative;z-index:3;flex:0 0 auto;padding:8px 10px;font-family:var(--mono);
+  font-size:11px;border-bottom:1px solid var(--line);background:var(--panel)}
+.slot-body{flex:1;min-height:0;display:grid;place-items:center;color:var(--dim);
+  position:relative;overflow:hidden;isolation:isolate}
+.slot-body img{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;
+  object-fit:cover;object-position:center;pointer-events:none;user-select:none}
+.slot-actions{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;gap:6px;
+  z-index:2;flex-wrap:wrap;padding:22px 8px 9px;background:linear-gradient(transparent,rgba(8,7,5,.92));
+  opacity:.9;transition:.15s ease;pointer-events:auto}
 .slot:hover .slot-actions,.slot:focus-within .slot-actions{opacity:1}
 .slot-actions .btn{background:rgba(15,13,10,.94);border-color:var(--amber-deep);color:var(--amber)}
+.slot-actions .btn--danger{border-color:#67302c;color:#ff9c94;background:rgba(26,14,13,.96)}
 .slot-hint{font-family:var(--mono); font-size:10px; color:var(--dim); text-align:center; padding:6px}
+.slot-empty-actions{display:flex;gap:6px;margin-top:9px}
 .slot .roleled{color:var(--dim)}
 .slot.done .roleled{color:var(--ok)}
 
@@ -379,7 +398,8 @@ input[type=range]{accent-color:var(--amber)}
 @media(max-width:1250px){
   .result-workbench{grid-template-columns:1fr;height:auto}.result-library{max-height:430px}.result-thumbs{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:760px){.stage-heading{flex-direction:column}.process-layout{display:block}.settings-stack{margin-bottom:14px}
-  .result-thumbs{grid-template-columns:repeat(2,1fr)}.scan-grid--optional{grid-template-columns:1fr}.output-path{align-items:flex-start}}
+  .result-thumbs{grid-template-columns:repeat(2,1fr)}.scan-grid--optional{grid-template-columns:1fr}.output-path{align-items:flex-start}
+  .shutdown-btn span:last-child{display:none}}
 
 /* ---- reduced motion: strip the theatrics, keep the palette ---------------- */
 @media (prefers-reduced-motion: reduce){
