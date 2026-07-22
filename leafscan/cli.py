@@ -453,7 +453,8 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
 def _mask_kw(cfg):
     m = cfg["align"]["mask"]
     return dict(close_radius=m["close_radius"], open_radius=m["open_radius"],
-                keep_largest=m["keep_largest"])
+                keep_largest=m["keep_largest"],
+                detect_interior_holes=m.get("detect_interior_holes", False))
 
 
 def _pad_stack_to_common_canvas(stack):

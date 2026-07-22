@@ -50,7 +50,7 @@ The reconstruction is only as good as its registration. Every output pixel must 
 
 ![Registration pipeline: segment the subject, de-rotate rigidly, estimate flow on a lighting-invariant proxy, remap the raw scan once](docs/assets/registration-pipeline.svg)
 
-1. **Segment.** Otsu thresholding on linear luminance separates the darker subject from the bright platen background, followed by morphological cleanup and a largest-component pass. The resulting silhouette anchors everything that follows.
+1. **Segment.** Otsu thresholding on linear luminance separates the darker subject from the bright platen background, followed by morphological cleanup and a largest-component pass. Enclosed bright regions are then filled so white paint, paper, print, and other light details remain inside the subject mask. The resulting solid silhouette anchors everything that follows.
 2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the nominal −90°·k about the subject's centroid and refined twice. First with ECC image alignment run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting; each candidate refinement is accepted only if it does not reduce silhouette overlap, so it can never make the nominal placement worse. Then a **feature-matching pass** takes over: ORB keypoints on contrast-normalized luminance (detected away from the boundary, where per-scan shadow direction jitters the mask) are matched under a tight displacement budget and fit to a rigid transform with RANSAC, iterated to convergence. A correction is accepted only when it measurably improves dense high-pass image agreement — a lighting-robust check that catches spatially clustered false consensus. This matters because hand-placed rotations are genuinely 0.5–2° off the nominal 90° steps, an error the mask outline cannot reveal but interior texture can.
 3. **Proxy flow.** A rigid transform is not enough for a leaf, a pressed flower, or fabric: handling it between rotations lets it settle slightly differently each time. Dense DIS optical flow measures that elastic deformation — but on a purpose-built proxy image, never on the raw pixels.
 4. **Remap once.** The flow field is smoothed, clamped to a sane maximum displacement (600 px at full resolution by default), and applied to the full-detail original in a single interpolation, so no detail is lost to repeated resampling. Pixels that end up covered by fewer than three warped views are excluded from the solve as underdetermined.
@@ -60,6 +60,24 @@ The subtle part is what the elastic step is *not allowed to see*. Optical flow w
 ![Flow on raw differently-lit scans chases the lamp and destroys the signal; flow on lighting-invariant proxies measures only real settling, estimated at quarter scale and upscaled](docs/assets/lighting-invariant-proxy.svg)
 
 One practical trick makes this tractable at scanner resolutions: a thin subject can settle by hundreds of pixels at 600 dpi, far beyond a dense matcher's search range. The flow is therefore estimated on a quarter-scale copy of the proxy, where the same motion spans only dozens of pixels, then upscaled — vector magnitudes scaled with it — before the one full-resolution remap. The tunables live under `align` in [`leafscan/config.yaml`](leafscan/config.yaml), and the implementation is [`leafscan/align.py`](leafscan/align.py).
+
+### Solid silhouettes and real holes
+
+Background detection uses a **solid subject silhouette by default**. After the outside platen background is identified, any bright region fully enclosed by the subject outline remains valid. This prevents white or nearly white object details—such as white paint brushstrokes on a darker carrier—from being mistaken for background and cut out of the normal, height, albedo, and alpha results.
+
+For genuinely perforated subjects, enable **Detect holes in subject** in the app's Process settings. This restores the earlier threshold-based behavior so the platen visible through holes is removed from the reconstruction. Use it deliberately: **the same setting can rotoscope white parts of the object**, because a white surface detail and the white platen can have similar luminance.
+
+The equivalent configuration is:
+
+```yaml
+align:
+  mask:
+    # false: solid silhouette; preserves enclosed white/light object details
+    # true: detect real holes, but may also remove white parts of the object
+    detect_interior_holes: false
+```
+
+This mask is shared by cropping, alignment, per-pixel validity, height integration, alpha generation, the interactive preview, and exported maps, so the viewport and deliverables use the same subject boundary.
 
 ## From scans to a relightable material
 
@@ -79,7 +97,7 @@ One practical trick makes this tractable at scanner resolutions: a thin subject 
 |:--:|:--:|:--:|
 | ![Recovered Kiwi sRGB albedo](docs/assets/kiwi-albedo.webp) | ![Recovered Kiwi OpenGL normal map](docs/assets/kiwi-normal.webp) | ![Integrated Kiwi height field](docs/assets/kiwi-height.webp) |
 
-These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. The delivered silhouette is edge-trimmed and lightly regularized (`output.edge` in the config) so per-scan shadow jitter does not serrate the alpha cutout. Full outputs remain 16-bit where useful; README images are compressed display copies only.
+These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. By default, the delivered mask is a solid silhouette that preserves enclosed white details; it is also edge-trimmed and lightly regularized (`output.edge` in the config) so per-scan shadow jitter does not serrate the alpha cutout. Full outputs remain 16-bit where useful; README images are compressed display copies only.
 
 ## Not just leaves: a rigid prototype PCB
 
@@ -93,7 +111,7 @@ The four captures above are shown exactly as the scanner delivered them: the **f
 |:--:|:--:|:--:|
 | ![Recovered PCB sRGB albedo](docs/assets/pcb-albedo.webp) | ![Recovered PCB OpenGL normal map](docs/assets/pcb-normal.webp) | ![Integrated PCB height field](docs/assets/pcb-height.webp) |
 
-Every drilled hole resolves as an individual dimple in the normal map, the silkscreen grid sits flat where it should, and the height panel (contrast-mapped from the 16-bit original) shows the shallow board warp plus per-hole relief. Re-render residual means for the four scans were **0.0070–0.0131** on normalized linear intensity, from `sessions/pcb-scan-20260714-194232/out`. The usual caution stands: this board is light and smooth, but any rigid object can scratch the platen — never press one down with the lid.
+Every drilled hole resolves as an individual dimple in the normal map, the silkscreen grid sits flat where it should, and the height panel (contrast-mapped from the 16-bit original) shows the shallow board warp plus per-hole relief. A perforated board is a good case for enabling **Detect holes in subject**; leave it off for boards whose white silkscreen or other light surface details must remain in the reconstruction. Re-render residual means for the four scans were **0.0070–0.0131** on normalized linear intensity, from `sessions/pcb-scan-20260714-194232/out`. The usual caution stands: this board is light and smooth, but any rigid object can scratch the platen — never press one down with the lid.
 
 <div align="center">
 
@@ -229,7 +247,7 @@ The mathematical model assumes mostly diffuse reflection and shallow relief. Mil
 2. Connect the scanner and install its WIA driver.
 3. Double-click `run.bat`.
 
-The launcher creates an isolated `.venv`, installs dependencies, starts the local LUMEN-PS bench, and opens `http://127.0.0.1:8756`. In the app: create a session, capture four rotations, process, then drag the light around the interactive result.
+The launcher creates an isolated `.venv`, installs dependencies, starts the local LUMEN-PS bench, and opens `http://127.0.0.1:8756`. In the app: create a session, capture four rotations, process, then drag the light around the interactive result. The Process screen keeps **Detect holes in subject** off by default; enable it only when the subject has real cutouts and heed the warning about white object details.
 
 If an NVIDIA GPU is detected, the first launch also installs the project-local CUDA runtime, cuBLAS, and cuFFT packages. This is a large one-time download; no system-wide CUDA Toolkit installation is required. Systems without a compatible NVIDIA GPU continue with the optimized CPU backend.
 

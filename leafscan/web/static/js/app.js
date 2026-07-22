@@ -4,7 +4,7 @@ import { Relight } from './relight.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-scan-controls-v2';
+const EXPECTED_BACKEND = '2026.07-silhouette-mask-v1';
 const STAGES = ['capture', 'process', 'results'];
 const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
   '[valid]': 1, '[calib]': 2, '[solve]': 3, '[integrate]': 4,
@@ -405,7 +405,8 @@ function renderProcess() {
         <div class="settings-section"><div class="settings-title"><span>01</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
           ${selectControl('solve.rejection', 'Outlier rejection', 'Remove glare and shadow samples per pixel.', [
             ['none', 'None'], ['drop_brightest', 'Drop brightest'], ['drop_brightest_and_darkest', 'Drop brightest + darkest']])}
-          ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}</div>
+          ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}
+          ${toggleControl('align.mask.detect_interior_holes', 'Detect holes in subject', 'Optional for perforated subjects. Warning: this can rotoscope white parts of the object.')}</div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Output maps</b><small>Edges, relief, and transparency.</small></div></div>
           ${toggleControl('integrate.enabled', 'Height map', 'Integrate normals into a relief map.')}
           ${toggleControl('output.alpha.enabled', 'Alpha map', 'Export silhouette and RGBA convenience maps.')}

@@ -37,7 +37,8 @@ def union_leaf_bbox(scan_paths, cfg, coarse=0.25, margin_frac=0.04):
     lw = tuple(cfg["io"]["luma_weights"])
     m = cfg["align"]["mask"]
     kw = dict(close_radius=m["close_radius"], open_radius=m["open_radius"],
-              keep_largest=m["keep_largest"])
+              keep_largest=m["keep_largest"],
+              detect_interior_holes=m.get("detect_interior_holes", False))
     x0 = y0 = 1e18
     x1 = y1 = -1e18
     full_w = full_h = 0
@@ -63,8 +64,16 @@ def union_leaf_bbox(scan_paths, cfg, coarse=0.25, margin_frac=0.04):
 # --------------------------------------------------------------------------- #
 # Masking (§6.5)
 # --------------------------------------------------------------------------- #
-def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=True):
-    """Otsu on linear luminance -> morphology -> largest component. Leaf=True."""
+def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=True,
+                 detect_interior_holes=False):
+    """Segment the subject from the bright platen background.
+
+    By default the thresholded outline is converted to a solid silhouette, so
+    bright or white details enclosed by the subject remain valid reconstruction
+    pixels. ``detect_interior_holes=True`` preserves the previous threshold mask
+    for genuinely perforated subjects, at the cost of also removing enclosed
+    white subject details.
+    """
     x = luma.astype(np.float32)
     x = x / (x.max() + 1e-8)
     u8 = np.clip(x * 255, 0, 255).astype(np.uint8)
@@ -82,7 +91,20 @@ def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=T
         if n > 1:
             biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
             mask = lbl == biggest
+    if not detect_interior_holes:
+        mask = _fill_enclosed_holes(mask)
     return mask
+
+
+def _fill_enclosed_holes(mask: np.ndarray) -> np.ndarray:
+    """Fill background components that cannot reach the image boundary."""
+    # Padding guarantees a known exterior seed even when the subject touches a
+    # corner or edge of a tightly cropped scan.
+    background = np.pad(~mask, 1, mode="constant", constant_values=True).astype(np.uint8)
+    flood_mask = np.zeros((background.shape[0] + 2, background.shape[1] + 2), np.uint8)
+    cv2.floodFill(background, flood_mask, (0, 0), 2)
+    holes = background[1:-1, 1:-1] == 1
+    return mask | holes
 
 
 def _centroid(mask):

@@ -70,6 +70,9 @@ align:
     close_radius: 5
     open_radius: 3
     keep_largest: true
+    # Solid silhouette is safest for white/light subject details. Enable only
+    # for genuinely perforated subjects: it also removes enclosed white areas.
+    detect_interior_holes: false
     min_valid_samples: 3          # valid pixel needs >=3 of 4 warped samples
 
 solve:
