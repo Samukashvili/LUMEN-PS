@@ -1,3 +1,5 @@
+LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures into normal, albedo, height, and alpha maps using photometric stereo.
+
 <div align="center">
 
 # LUMEN-PS
