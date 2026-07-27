@@ -24,6 +24,7 @@ The core insight: a scanner's lamp is fixed relative to its sensor, so a single 
 - `normal_gl.png` — tangent-space normal map, OpenGL convention (+Y up)
 - `normal_dx.png` — same, DirectX convention (-Y / green flipped)
 - `albedo.png` — lighting-free base color
+- `roughness.png` — perceptual PBR roughness, baseline-calibrated without range normalization
 - `height.png` — integrated height field (optional, from normals)
 - `thickness.png` — optional, from a backlit transmission scan (see §10)
 - `qa/` — diagnostic renders and residual maps
@@ -358,6 +359,42 @@ Integrate the normal field into a height field via **Frankot–Chellappa** (FFT-
 
 Expect low-frequency drift/doming; high-pass the result if it's only being used for detail.
 
+### 9.1a Roughness map
+
+Use the recovered normal, all unsaturated registered intensities, the calibrated
+lights, and constant scanner view `V = (0,0,1)`. For each perceptual roughness
+candidate (`alpha = roughness²`), fit non-negative diffuse and specular
+amplitudes and select the lowest-error lobe. Implement GGX, Beckmann, and Ward
+profiles so real scans can be compared rather than assuming one distribution.
+
+Every BRDF candidate must use `N·L`, `N·V`, and `N·H`; otherwise local vein
+slope is incorrectly absorbed into roughness. Do not feed integrated height
+back into the local BRDF: height is derived from `N`, lacks an absolute physical
+scale, and would double-count geometry. It may guide spatial support. Use a
+joint bilateral regularizer keyed by the normal field so evidence is pooled
+along tissue while raised vein boundaries are not blurred across.
+
+Four samples leave only one residual degree of freedom after diffuse amplitude,
+specular amplitude, and roughness are fitted. Publish confidence maps, reject
+three-sample/saturated/flat-lobe estimates as unsupported, and spatially
+regularize from confident neighbours.
+
+Absolute calibration comes from a user-specified baseline. Translate the robust
+centre of the recovered field to that baseline:
+
+```
+r_out = baseline + detail_strength * (r_regularized - centre)
+r_out = clamp(r_out, baseline - max_deviation, baseline + max_deviation)
+```
+
+Never min/max-normalize or percentile-stretch roughness. Unlike height,
+roughness already has a meaningful PBR scale; a narrow recovered interval must
+remain narrow. Use a conservative explicit `max_deviation` material prior,
+estimate on a pooled lower-resolution grid, and use the median of GGX,
+Beckmann, and Ward as comparison mode's primary map. Those operations suppress
+under-constrained scan noise and model-specific extremes without inventing a
+black-to-white range.
+
 ### 9.2 Cleanup
 
 - Inpaint invalid pixels (from §6.5) — use `cv2.inpaint` or simple flood-fill from valid neighbors.
@@ -411,6 +448,7 @@ leafscan/
   align.py                # fiducials, rigid, non-rigid warp, masks
   lights.py               # light-vector bookkeeping (+ unit tests)
   solve.py                # robust photometric stereo, vectorized
+  roughness.py            # GGX/Beckmann/Ward fits + baseline retargeting
   integrate.py            # Frankot-Chellappa
   outputs.py              # encoding, GL/DX export
   qa.py                   # re-render residuals, mask agreement, light-vector dump

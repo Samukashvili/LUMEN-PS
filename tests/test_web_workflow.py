@@ -24,6 +24,19 @@ def test_16bit_height_preview_preserves_tonal_range(tmp_path: Path):
     assert np.unique(preview).size > 100
 
 
+def test_16bit_roughness_preview_is_not_contrast_normalized(tmp_path: Path):
+    source = np.linspace(0.56, 0.70, 128 * 64, dtype=np.float32).reshape(64, 128)
+    path = tmp_path / "roughness.png"
+    Image.fromarray(np.round(source * 65535).astype(np.uint16)).save(path)
+
+    response = _serve_image(path, 128, keep_alpha=True)
+    preview = np.asarray(Image.open(io.BytesIO(response.body)).convert("L"))
+
+    assert 141 <= preview.min() <= 144
+    assert 177 <= preview.max() <= 179
+    assert preview.max() - preview.min() < 40
+
+
 def test_job_stream_does_not_skip_log_appended_during_send(monkeypatch):
     job = {
         "status": "running",

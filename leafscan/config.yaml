@@ -95,6 +95,31 @@ solve:
     albedo_floor: 0.02            # don't let near-black pixels amplify noise
     fill_dilate_px: 1             # grow the inpaint mask to catch fringes
 
+roughness:
+  enabled: true
+  # compare writes GGX, Beckmann, and Ward maps side by side; roughness.png is
+  # their robust median consensus. Select one model to make it the primary output.
+  method: "compare"                # compare | ggx | beckmann | ward
+  baseline: 0.70                   # user's eye-estimated dominant/average roughness
+  baseline_statistic: "median"     # median | mode | mean
+  detail_strength: 0.25            # conservative four-view shrinkage; 1.0 keeps raw deviations
+  max_deviation: 0.08              # hard physical prior around baseline; not a range remap
+  consensus_agreement: 0.06        # disagreeing BRDF models shrink back toward baseline
+  min_roughness: 0.02              # physical clamp only, not an output remap
+  max_roughness: 1.0
+  estimation_scale: 0.5            # roughness is a low-frequency material map; pool scan noise
+  candidates: 24                   # perceptual-roughness samples per BRDF fit
+  saturation: 0.995                # saturated observations cannot locate a highlight peak
+  min_n_dot_l: 0.03                # reject self-shadow/grazing samples from the BRDF fit
+  noise_floor: 0.002               # linear-intensity improvement required above sensor noise
+  min_confidence: 0.04             # unsupported pixels inherit nearby supported roughness
+  min_support_fraction: 0.02       # below this, evidence is too sparse: use baseline
+  spatial_sigma: 8.0               # confidence-weighted radius in full-resolution pixels
+  geometry_sigma: 0.08             # normal-vector edge threshold for vein-aware filtering
+  tile_rows: 64                    # bounds peak memory on full-resolution scans
+  bits: 16
+  write_raw_qa: true               # physical pre-retarget maps + confidence diagnostics
+
 integrate:
   enabled: true
   method: "frankot_chellappa"

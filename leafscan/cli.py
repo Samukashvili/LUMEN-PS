@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import align, calibrate as calib, integrate, io, outputs, qa
+from . import align, calibrate as calib, integrate, io, outputs, qa, roughness
 from .lights import light_directions, nominal_thetas, format_light_table
 from .solve import photometric_solve
 
@@ -411,6 +411,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
             nsamples = nsamples[sy, sx]
             I_stack = I_stack[:, sy, sx]
             rgb_stack = rgb_stack[:, sy, sx]
+            valid_stack = valid_stack[:, sy, sx]
             out["weights"] = out["weights"][:, sy, sx]
             if alpha is not None:
                 alpha = alpha[sy, sx]
@@ -419,7 +420,181 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
             log(f"[frame] centered crop -> {normal.shape[1]}x{normal.shape[0]} "
                 f"(x[{sx.start},{sx.stop}] y[{sy.start},{sy.stop}])")
 
-    # ---- 10. height integration (§9.1) ----
+    # ---- 10. roughness recovery ----
+    roughness_outputs = {}
+    roughness_stats = {}
+    rcfg = cfg.get("roughness", {})
+    if rcfg.get("enabled", False):
+        requested = str(rcfg.get("method", "ggx")).lower()
+        models = roughness.MODELS if requested == "compare" else (requested,)
+        if any(model not in roughness.MODELS for model in models):
+            raise ValueError(
+                f"roughness.method must be compare or one of {roughness.MODELS}"
+            )
+        estimate_scale = float(np.clip(rcfg.get("estimation_scale", 0.5), 0.1, 1.0))
+        if estimate_scale < 0.999:
+            fit_size = (
+                max(8, int(round(normal.shape[1] * estimate_scale))),
+                max(8, int(round(normal.shape[0] * estimate_scale))),
+            )
+            fit_intensity = np.stack([
+                cv2.resize(image, fit_size, interpolation=cv2.INTER_AREA)
+                for image in I_stack
+            ])
+            fit_normal = cv2.resize(normal, fit_size, interpolation=cv2.INTER_AREA)
+            fit_normal /= np.maximum(
+                np.linalg.norm(fit_normal, axis=-1, keepdims=True), 1e-8
+            )
+            fit_core = cv2.resize(
+                core.astype(np.float32), fit_size, interpolation=cv2.INTER_AREA
+            ) > 0.98
+            fit_sample_valid = np.stack([
+                cv2.resize(
+                    image.astype(np.float32), fit_size,
+                    interpolation=cv2.INTER_AREA,
+                ) > 0.98
+                for image in valid_stack
+            ])
+            log(
+                f"[roughness] pooled estimation grid {fit_size[0]}x{fit_size[1]} "
+                f"({estimate_scale:.2f}x output)"
+            )
+        else:
+            fit_intensity = I_stack
+            fit_normal = normal
+            fit_core = core
+            fit_sample_valid = valid_stack
+        # Configured in full-resolution source pixels, so previews and final
+        # full-resolution runs receive the same physical smoothing footprint.
+        fit_sigma = (
+            float(rcfg.get("spatial_sigma", 8.0))
+            * float(scale)
+            * estimate_scale
+        )
+        baseline = float(rcfg.get("baseline", 0.70))
+        recovered = {}
+        for model in models:
+            estimate = roughness.estimate_microfacet_roughness(
+                fit_intensity, fit_normal, L, fit_core,
+                sample_valid=fit_sample_valid,
+                model=model,
+                min_roughness=float(rcfg.get("min_roughness", 0.02)),
+                max_roughness=float(rcfg.get("max_roughness", 1.0)),
+                candidates=int(rcfg.get("candidates", 24)),
+                saturation=float(rcfg.get("saturation", 0.995)),
+                min_n_dot_l=float(rcfg.get("min_n_dot_l", 0.03)),
+                noise_floor=float(rcfg.get("noise_floor", 0.002)),
+                tile_rows=int(rcfg.get("tile_rows", 64)),
+            )
+            mapped, model_stats = roughness.retarget_baseline(
+                estimate.raw, estimate.confidence, fit_core, baseline,
+                statistic=str(rcfg.get("baseline_statistic", "median")),
+                detail_strength=float(rcfg.get("detail_strength", 0.25)),
+                max_deviation=float(rcfg.get("max_deviation", 0.08)),
+                spatial_sigma=fit_sigma,
+                geometry_guide=fit_normal,
+                geometry_sigma=float(rcfg.get("geometry_sigma", 0.08)),
+                min_confidence=float(rcfg.get("min_confidence", 0.04)),
+                min_support_fraction=float(rcfg.get("min_support_fraction", 0.02)),
+                min_roughness=float(rcfg.get("min_roughness", 0.02)),
+                max_roughness=float(rcfg.get("max_roughness", 1.0)),
+            )
+            if estimate_scale < 0.999:
+                mapped_full = cv2.resize(
+                    mapped, (normal.shape[1], normal.shape[0]),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+                mapped_full = np.clip(
+                    mapped_full,
+                    max(float(rcfg.get("min_roughness", 0.02)),
+                        baseline - float(rcfg.get("max_deviation", 0.08))),
+                    min(float(rcfg.get("max_roughness", 1.0)),
+                        baseline + float(rcfg.get("max_deviation", 0.08))),
+                )
+            else:
+                mapped_full = mapped
+            recovered[model] = _fill_invalid(mapped_full, core, out_valid)
+            roughness_stats[model] = model_stats
+            log(
+                f"[roughness] {model}: baseline={baseline:.3f} "
+                f"source={model_stats['source_center']} "
+                f"p01..p99={model_stats['output_p01']:.3f}.."
+                f"{model_stats['output_p99']:.3f} "
+                f"trusted={100 * model_stats['trusted_fraction']:.1f}%"
+            )
+            if rcfg.get("write_raw_qa", True):
+                raw_qa = np.where(
+                    fit_core & np.isfinite(estimate.raw), estimate.raw, baseline
+                )
+                confidence_qa = np.where(fit_core, estimate.confidence, 0.0)
+                if estimate_scale < 0.999:
+                    raw_qa = cv2.resize(
+                        raw_qa, (normal.shape[1], normal.shape[0]),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                    confidence_qa = cv2.resize(
+                        confidence_qa, (normal.shape[1], normal.shape[0]),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                outputs.save_png(
+                    qa_dir / f"roughness_{model}_raw.png", raw_qa,
+                    int(rcfg.get("bits", 16)),
+                )
+                outputs.save_png(
+                    qa_dir / f"roughness_{model}_confidence.png",
+                    confidence_qa, 8,
+                )
+        if requested == "compare":
+            consensus, agreement = roughness.consensus_roughness(
+                [recovered[model] for model in models],
+                baseline,
+                agreement_scale=float(rcfg.get("consensus_agreement", 0.06)),
+                max_deviation=float(rcfg.get("max_deviation", 0.08)),
+                min_roughness=float(rcfg.get("min_roughness", 0.02)),
+                max_roughness=float(rcfg.get("max_roughness", 1.0)),
+            )
+            values = consensus[core]
+            q01, q50, q99 = np.percentile(values, [1, 50, 99])
+            roughness_stats["consensus"] = {
+                "source_center": None,
+                "trusted_fraction": float(np.median([
+                    roughness_stats[model]["trusted_fraction"] for model in models
+                ])),
+                "output_min": float(values.min()),
+                "output_p01": float(q01),
+                "output_median": float(q50),
+                "output_p99": float(q99),
+                "output_max": float(values.max()),
+            }
+            roughness_outputs["roughness.png"] = consensus
+            roughness_outputs["roughness_consensus.png"] = consensus
+            outputs.save_png(
+                qa_dir / "roughness_model_agreement.png",
+                np.where(core, agreement, 0.0), 8,
+            )
+            # Inspection-only contrast view: the material map itself stays in
+            # physical PBR units, while this QA image makes narrow, supported
+            # vein-scale deviations around the baseline visible to the eye.
+            deviation = max(float(rcfg.get("max_deviation", 0.08)), 1e-6)
+            detail_preview = np.clip(
+                0.5 + (consensus - baseline) / (2.0 * deviation), 0.0, 1.0
+            )
+            outputs.save_png(
+                qa_dir / "roughness_detail_preview.png",
+                np.where(core, detail_preview, 0.0), 8,
+            )
+            roughness_outputs.update({
+                f"roughness_{model}.png": recovered[model] for model in models
+            })
+            log(
+                f"[roughness] consensus: p01..p99={q01:.3f}..{q99:.3f} "
+                f"range={values.min():.3f}..{values.max():.3f}"
+            )
+        else:
+            roughness_outputs["roughness.png"] = recovered[requested]
+        check_cancelled()
+
+    # ---- 10.5 height integration (§9.1) ----
     height = None
     if cfg["integrate"]["enabled"]:
         # integrate over the clean core so padded pixels don't inject fake slopes
@@ -433,7 +608,9 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     written = outputs.write_outputs(
         out_dir, normal, albedo_rgb, out_valid, height, alpha=alpha,
         normal_bits=ocfg["normal_bits"],
-        albedo_linear=ocfg["albedo_linear"], albedo_srgb=ocfg["albedo_srgb"])
+        albedo_linear=ocfg["albedo_linear"], albedo_srgb=ocfg["albedo_srgb"],
+        roughness=roughness_outputs,
+        roughness_bits=int(rcfg.get("bits", 16)))
     check_cancelled()
     for p in written:
         log(f"[out] {p}")
@@ -444,10 +621,14 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
                         az0=az0, el=el, subsurface=sub, weights=out["weights"],
                         repair=repair_map,
                         backend=compute_backend,
-                        extra_text=f"light_source={source}  flat={flat_src}")
+                        extra_text=(
+                            f"light_source={source}  flat={flat_src}\n"
+                            f"roughness={roughness_stats or 'disabled'}"
+                        ))
     log(f"[qa] residual means: {[round(s['mean'],4) for s in stats]}  -> {qa_dir}")
     return {"out_dir": out_dir, "az0": az0, "el": el, "thetas": thetas,
-            "residual": stats, "valid_px": int(out_valid.sum())}
+            "residual": stats, "valid_px": int(out_valid.sum()),
+            "roughness": roughness_stats}
 
 
 def _mask_kw(cfg):

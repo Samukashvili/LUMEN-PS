@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
-APP_VERSION = "2026.07-silhouette-mask-v1"
+APP_VERSION = "2026.07-roughness-v1"
 
 
 # ---- models ---------------------------------------------------------------- #
@@ -305,7 +305,12 @@ def api_result_image(sid: str, name: str, max: int = 0,
         raise HTTPException(404, f"{path.name} not found")
     if raw or download or path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
         return FileResponse(path, filename=path.name if download else None)
-    alpha = name.endswith("rgba.png") or name == "alpha.png" or name.startswith("normal_")
+    alpha = (
+        name.endswith("rgba.png")
+        or name == "alpha.png"
+        or name.startswith("normal_")
+        or name.startswith("roughness")
+    )
     return _serve_image(path, max or None, keep_alpha=alpha)
 
 
