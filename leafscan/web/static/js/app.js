@@ -1,10 +1,10 @@
 // LUMEN-PS front controller: capture, persistent processing, and result inspection.
-import { api, streamJob } from './api.js';
+import { api, streamJob } from './api.js?v=2026.07-eight-scan-v1';
 import { Relight } from './relight.js';
 
 const $ = (s, r = document) => r.querySelector(s);
-const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-silhouette-mask-v1';
+const LEAF = ['k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7'];
+const EXPECTED_BACKEND = '2026.07-eight-scan-v1';
 const STAGES = ['capture', 'process', 'results'];
 const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
   '[valid]': 1, '[calib]': 2, '[solve]': 3, '[integrate]': 4,
@@ -45,6 +45,9 @@ const esc = s => String(s ?? '').replace(/[&<>]/g,
   c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const escAttr = s => esc(s).replace(/"/g, '&quot;');
 const bytes = n => n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+const scanCount = () => S.meta?.scan_count === 8 ? 8 : 4;
+const activeLeaf = () => LEAF.slice(0, scanCount());
+const rotationStep = () => 360 / scanCount();
 
 function toggleControl(path, label, note) {
   return `<div class="field"><div class="lab"><b>${label}</b><small>${note}</small></div>
@@ -135,7 +138,8 @@ async function paintRecent() {
     const li = document.createElement('li'); li.className = 'recent-item';
     const tag = m.status === 'done' ? 'tag--done' : m.status === 'ready' ? 'tag--ready' : '';
     li.innerHTML = `<span class="r-name">${esc(m.name)}</span><span class="r-meta">
-      ${m.created.slice(0, 16).replace('T', ' ')} <span class="tag ${tag}">${m.status}</span></span>
+      ${m.scan_count || 4} inputs · ${m.created.slice(0, 16).replace('T', ' ')}
+      <span class="tag ${tag}">${m.status}</span></span>
       <button class="recent-delete" type="button" data-delete="${escAttr(m.id)}" aria-label="Remove ${escAttr(m.name)}">Delete</button>`;
     li.onclick = () => enterSession(m.id); ul.appendChild(li);
     $('.recent-delete', li).addEventListener('click', e => { e.stopPropagation(); openDeleteSession(m); });
@@ -147,6 +151,10 @@ function openNewSession() {
 }
 function closeNewSession() { $('#new-session-dialog').hidden = true; }
 function openResetScans() {
+  const roles = activeLeaf();
+  $('#reset-scans-description').textContent =
+    `This permanently removes ${roles[0]} through ${roles.at(-1)} and any optional reference scans. ` +
+    'Scan settings and exported result files are preserved, but the session returns to its first capture.';
   $('#reset-scans-dialog').hidden = false;
   $('#reset-scans-cancel').focus();
 }
@@ -248,17 +256,27 @@ function doneStage(name) {
 
 // ---- Capture --------------------------------------------------------------
 function renderCapture() {
-  const m = S.meta, c = S.cfg, next = LEAF.find(r => !m.scans[r]);
+  const m = S.meta, c = S.cfg, roles = activeLeaf(), count = scanCount();
+  const step = rotationStep(), next = roles.find(r => !m.scans[r]);
   const dpiOpts = S.device?.dpi_options?.length ? S.device.dpi_options : [300, 600, 1200];
   const smart = c.capture.smart_roi || { enabled: true, preview_dpi: 75 };
+  const primaryCaptured = LEAF.some(role => m.scans[role]);
+  const captureBusy = S.jobKind?.startsWith('capture:') && ['queued', 'running'].includes(S.jobStatus);
+  const countLocked = primaryCaptured || captureBusy;
   const main = $('#stage-main');
   main.innerHTML = `
     <div class="stage-heading"><div><div class="eyebrow">Stage 1 / Acquisition</div>
-      <h2 class="stage-title">Capture</h2><p class="stage-lead">Rotate the subject a quarter turn between four locked-light scans.</p></div>
-      <div class="capture-readout"><b>${c.capture.dpi}</b><span>detail dpi</span></div></div>
+      <h2 class="stage-title">Capture</h2><p class="stage-lead">${count} locked-light observations at ${step}&deg; intervals.</p></div>
+      <div class="capture-readout"><b>${count}</b><span>scan inputs</span></div></div>
     <div class="capture-settings capture-settings--expanded">
-      <div><label for="capture-dpi">Detail resolution</label>
+      <div class="capture-setting"><label for="capture-dpi">Detail resolution</label>
         <select id="capture-dpi">${dpiOpts.map(d => `<option value="${d}" ${d === c.capture.dpi ? 'selected' : ''}>${d} dpi</option>`).join('')}</select></div>
+      <div class="capture-setting capture-count-setting"><label id="scan-count-label">Scan inputs</label>
+        <div class="seg scan-count-seg" role="group" aria-labelledby="scan-count-label">
+          ${[4, 8].map(value => `<button type="button" data-scan-count="${value}" aria-pressed="${count === value}"
+            class="${count === value ? 'on' : ''}" ${countLocked ? 'disabled' : ''}><b>${value}</b><span>scans / ${360 / value}&deg;</span></button>`).join('')}
+        </div>
+        <small>${primaryCaptured ? 'Reset primary scans to change this.' : 'Choose before the first primary scan.'}</small></div>
       <div class="capture-speed"><button class="tgl" id="smart-roi" type="button" role="switch"
         aria-checked="${!!smart.enabled}" aria-label="Fast area scan"></button>
         <div><b>Fast area scan</b><span>${smart.preview_dpi || 75} dpi locator pass, then detail-scan only the detected area.</span></div></div>
@@ -266,16 +284,16 @@ function renderCapture() {
         ${S.backendCurrent ? '' : 'Backend update pending. Restart LUMEN-PS before scanning.'}</span>
     </div>
     <div class="instr"><div><div class="eyebrow">Rotation protocol</div>
-      <p style="margin:.4em 0 0">Keep the same face up. After each scan, rotate it <span class="kbd">90&deg; clockwise</span> about its centre.</p></div></div>
-    <div class="scan-grid" id="slots">${LEAF.map(slot).join('')}</div>
+      <p style="margin:.4em 0 0">Keep the same face up. After each scan, rotate it <span class="kbd">${step}&deg; clockwise</span> about its centre. The angle stamped on each slot is measured from k0.</p></div></div>
+    <div class="scan-grid" id="slots" data-count="${count}">${roles.map(slot).join('')}</div>
     <details class="expander"><summary>Optional acquisition references</summary>
       <p class="stage-lead" style="margin-top:8px">Flat-field and corrugated calibration are available when the bench needs tighter calibration.</p>
       <div class="scan-grid scan-grid--optional">${['flat', 'calib0', 'calib90'].map(slot).join('')}</div></details>
     <div class="stage-foot"><div><button class="btn btn--danger btn--sm" id="reset-scans"
       ${Object.values(m.scans).some(Boolean) ? '' : 'disabled'}>Reset all scans</button>
-      <button class="btn btn--ghost btn--sm" id="cancel-job" ${S.jobKind?.startsWith('capture:') && ['queued', 'running'].includes(S.jobStatus) ? '' : 'hidden'}>Cancel scan</button>
+      <button class="btn btn--ghost btn--sm" id="cancel-job" ${captureBusy ? '' : 'hidden'}>Cancel scan</button>
       <span id="capture-job-note" class="mono muted"></span></div>
-      <div class="foot-actions"><button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : 'All scans captured'}</button>
+      <div class="foot-actions"><button class="btn btn--primary" id="scan-btn">${next ? 'Scan ' + next : `All ${count} scans captured`}</button>
       <button class="btn" id="to-process" ${m.ready ? '' : 'disabled'}>Continue to Process &rarr;</button></div></div>`;
   main.querySelectorAll('[data-scan]').forEach(b => b.addEventListener('click', () => doCapture(b.dataset.scan)));
   main.querySelectorAll('[data-import]').forEach(b => b.addEventListener('click', () => {
@@ -289,6 +307,8 @@ function renderCapture() {
   }));
   main.querySelectorAll('[data-remove-import]').forEach(b =>
     b.addEventListener('click', () => openRemoveImport(b.dataset.removeImport)));
+  main.querySelectorAll('[data-scan-count]').forEach(b =>
+    b.addEventListener('click', () => setScanCount(+b.dataset.scanCount)));
   const sb = $('#scan-btn'); if (next) sb.addEventListener('click', () => doCapture(next)); else sb.disabled = true;
   if (!S.backendCurrent) sb.disabled = true;
   $('#to-process').addEventListener('click', () => gotoStage('process'));
@@ -299,8 +319,24 @@ function renderCapture() {
     const b = e.currentTarget; b.setAttribute('aria-checked', String(b.getAttribute('aria-checked') !== 'true'));
     persistCaptureSettings();
   });
-  if (S.jobKind?.startsWith('capture:') && ['queued', 'running'].includes(S.jobStatus)) {
+  if (captureBusy) {
     disableActions(true); $('#capture-job-note').textContent = 'Scanner job continues in the background...';
+  }
+}
+async function setScanCount(count) {
+  if (count === scanCount()) return;
+  const status = $('#capture-settings-status');
+  document.querySelectorAll('[data-scan-count]').forEach(button => { button.disabled = true; });
+  status.textContent = `switching to ${count} inputs...`;
+  try {
+    S.meta = await api.setScanCount(S.sid, count);
+    paintTelemetry(); paintStageNav();
+    logLine(`[scan] ${count}-input capture selected; rotate ${360 / count} degrees between scans.`);
+    renderCapture();
+  } catch (err) {
+    logLine('[error] scan inputs: ' + err.message);
+    await refreshMeta();
+    renderCapture();
   }
 }
 async function persistCaptureSettings() {
@@ -316,9 +352,13 @@ function slot(role) {
   const done = S.meta.scans[role];
   const primary = LEAF.includes(role);
   const imported = (S.meta.capture_sources || {})[role] === 'imported';
-  const label = { flat: 'flat-field', calib0: 'calib 0&deg;', calib90: 'calib 90&deg;' }[role] || role;
+  const angle = primary ? (+role.slice(1) * rotationStep()) % 360 : null;
+  const label = { flat: 'flat-field', calib0: 'calib 0&deg;', calib90: 'calib 90&deg;' }[role];
+  const slotLabel = primary
+    ? `<span>${role}</span><span class="slot-angle">/ ${angle}&deg;</span>`
+    : label;
   const roi = (S.meta.capture_rois || {})[role];
-  return `<div class="slot ${done ? 'done' : ''}" id="slot-${role}"><div class="slot-cap"><span>${label}</span>
+  return `<div class="slot ${done ? 'done' : ''}" id="slot-${role}"><div class="slot-cap"><span class="slot-label">${slotLabel}</span>
     ${imported ? '<span class="slot-mode slot-mode--imported">IMPORTED</span>' : roi ? '<span class="slot-mode">ROI</span>' : '<span class="led roleled"></span>'}</div>
     <div class="slot-body">${done ? `<img src="${api.scanURL(S.sid, role)}" alt="${role}">
       <div class="slot-actions"><button class="btn btn--sm" type="button" data-scan="${role}">Rescan</button>
@@ -390,7 +430,7 @@ async function resetAllScans() {
 
 // ---- Process --------------------------------------------------------------
 function renderProcess() {
-  const c = S.cfg, busy = S.jobKind === 'run' && ['queued', 'running'].includes(S.jobStatus);
+  const c = S.cfg, count = scanCount(), busy = S.jobKind === 'run' && ['queued', 'running'].includes(S.jobStatus);
   const done = S.meta.status === 'done';
   if (done && !busy) S.processStage = PSTAGES.length;
   const main = $('#stage-main');
@@ -399,7 +439,7 @@ function renderProcess() {
       <p class="stage-lead">Tune the solve, choose where outputs live, then reconstruct every material and QA map.</p></div>
       <div class="process-state ${busy ? 'is-running' : done ? 'is-done' : ''}"><span class="led"></span>
         <div><b id="process-state-title">${busy ? 'Reconstruction running' : done ? 'Results ready' : 'Ready to solve'}</b>
-        <small id="process-state-note">${busy ? 'Safe to leave this page.' : done ? 'You can re-run with new settings.' : 'Four source scans detected.'}</small></div></div></div>
+        <small id="process-state-note">${busy ? 'Safe to leave this page.' : done ? 'You can re-run with new settings.' : `${count} source scans detected.`}</small></div></div></div>
     <div class="process-layout">
       <section class="settings-stack" id="process-settings">
         <div class="settings-section"><div class="settings-title"><span>01</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
@@ -644,12 +684,17 @@ function toggleLog() {
   const open = console.hidden; console.hidden = !open; toggle.setAttribute('aria-expanded', String(open));
 }
 function openLog() { if ($('#log-console').hidden) toggleLog(); }
-function disableActions(on) { document.querySelectorAll('#stage-main .btn').forEach(b => { b.disabled = on; }); }
+function disableActions(on) {
+  document.querySelectorAll('#stage-main .btn,#stage-main [data-scan-count]')
+    .forEach(button => { button.disabled = on; });
+}
 
 // ---- telemetry ------------------------------------------------------------
 function paintTelemetry() {
   const m = S.meta, d = S.device, r = m?.result;
-  const dots = LEAF.map(k => `<div class="dot ${m?.scans[k] ? 'done' : ''}">${k[1]}</div>`).join('');
+  const roles = activeLeaf();
+  const dots = roles.map(k => `<div class="dot ${m?.scans[k] ? 'done' : ''}">${k.slice(1)}</div>`).join('');
+  const complete = roles.filter(k => m?.scans[k]).length;
   let light = '';
   if (r) {
     const vectors = lightVectors(r.az0, r.el, r.thetas);
@@ -663,7 +708,7 @@ function paintTelemetry() {
     <div class="tel-row"><span>max depth</span><span class="v">${d?.max_bit_depth || '-'}-bit</span></div></div>
     <div class="tel-group"><div class="tel-k">Session</div><div class="tel-row"><span>name</span><span class="v">${esc(m?.name || '-')}</span></div>
     <div class="tel-row"><span>status</span><span class="v">${m?.status || '-'}</span></div>
-    <div class="tel-row"><span>scans</span><span class="dots">${dots}</span></div></div>${light}`;
+    <div class="tel-row"><span>scans ${complete}/${roles.length}</span><span class="dots">${dots}</span></div></div>${light}`;
 }
 function lightVectors(az0, el, thetas) {
   const er = el * Math.PI / 180, ch = Math.cos(er), sz = Math.sin(er);

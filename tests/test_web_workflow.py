@@ -79,7 +79,7 @@ def test_session_can_use_external_output_directory(tmp_path: Path, monkeypatch):
 def test_rescan_invalidates_previous_result(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
     meta = sessions.create_session("Rescan test")
-    for role in sessions.LEAF_ROLES:
+    for role in sessions.active_leaf_roles(meta):
         sessions.record_scan(meta["id"], role)
     sessions.set_status(meta["id"], "done", result={"valid_px": 42})
 
@@ -140,7 +140,7 @@ def test_import_scan_endpoint_accepts_uploaded_image(tmp_path: Path, monkeypatch
 def test_remove_one_imported_scan_keeps_other_captures(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
     meta = sessions.create_session("Fix one import")
-    for role in sessions.LEAF_ROLES:
+    for role in sessions.active_leaf_roles(meta):
         image = io.BytesIO()
         Image.new("RGB", (12, 8), (10, 20, 30)).save(image, format="PNG")
         image.seek(0)
@@ -219,7 +219,7 @@ def test_shutdown_endpoint_schedules_exit_after_response():
 def test_reset_scans_returns_session_to_k0(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
     meta = sessions.create_session("Reset test")
-    for role in sessions.LEAF_ROLES:
+    for role in sessions.active_leaf_roles(meta):
         path = sessions.scans_dir(meta["id"]) / f"{role}.png"
         path.write_bytes(b"scan")
         sessions.record_scan(meta["id"], role, roi_mm=(1, 2, 3, 4))
@@ -233,6 +233,91 @@ def test_reset_scans_returns_session_to_k0(tmp_path: Path, monkeypatch):
     assert not any(reset["capture_rois"].values())
     assert not any(reset["capture_sources"].values())
     assert not any(sessions.scans_dir(meta["id"]).glob("k*.png"))
+
+
+def test_session_defaults_to_four_inputs(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+
+    meta = sessions.create_session("Four input default")
+
+    assert meta["scan_count"] == 4
+    assert sessions.active_leaf_roles(meta) == ["k0", "k1", "k2", "k3"]
+    assert len(sessions.leaf_scan_paths(meta["id"])) == 4
+
+
+def test_eight_input_session_requires_all_eight_scans(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Eight inputs")
+    meta = sessions.set_scan_count(meta["id"], 8)
+    roles = sessions.active_leaf_roles(meta)
+
+    assert roles == [f"k{i}" for i in range(8)]
+    for role in roles[:-1]:
+        (sessions.scans_dir(meta["id"]) / f"{role}.png").write_bytes(b"scan")
+        meta = sessions.record_scan(meta["id"], role)
+
+    assert meta["status"] == "capturing"
+    assert not sessions.ready_to_run(meta["id"])
+
+    (sessions.scans_dir(meta["id"]) / "k7.png").write_bytes(b"scan")
+    meta = sessions.record_scan(meta["id"], "k7")
+
+    assert meta["status"] == "ready"
+    assert sessions.ready_to_run(meta["id"])
+    assert len(sessions.leaf_scan_paths(meta["id"])) == 8
+
+
+def test_scan_count_cannot_change_after_primary_capture(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Locked input count")
+    sessions.record_scan(meta["id"], "k0")
+
+    try:
+        sessions.set_scan_count(meta["id"], 8)
+    except ValueError as exc:
+        assert "Reset" in str(exc)
+    else:
+        raise AssertionError("captured angles must not be reinterpreted under another scan count")
+
+
+def test_eight_input_job_uses_all_scans_and_forty_five_degree_step(tmp_path: Path, monkeypatch):
+    import leafscan.cli as cli
+
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Eight input job", scan_count=8)
+    for role in sessions.active_leaf_roles(meta):
+        (sessions.scans_dir(meta["id"]) / f"{role}.png").write_bytes(b"scan")
+        sessions.record_scan(meta["id"], role, dpi=600)
+
+    received = {}
+
+    def fake_run_pipeline(cfg, scans, out_dir, **kwargs):
+        received.update(cfg=cfg, scans=scans, kwargs=kwargs)
+        return {
+            "az0": 90.0,
+            "el": 30.0,
+            "thetas": [i * -45.0 for i in range(8)],
+            "valid_px": 100,
+            "residual": [{"mean": 0.01} for _ in range(8)],
+        }
+
+    monkeypatch.setattr(cli, "run_pipeline", fake_run_pipeline)
+    job = {
+        "status": "queued",
+        "log": [],
+        "error": None,
+        "result": None,
+        "cancel_requested": jobs.threading.Event(),
+    }
+
+    jobs._run_pipeline_job(job, meta["id"])
+
+    assert job["status"] == "done"
+    assert received["cfg"]["align"]["rigid"]["nominal_step_deg"] == 45.0
+    assert len(received["scans"]) == 8
+    assert len(received["kwargs"]["capture_rois"]) == 8
+    assert len(received["kwargs"]["capture_dpi"]) == 8
+    assert job["result"]["scan_count"] == 8
 
 
 def test_remove_session_from_ui_keeps_files(tmp_path: Path, monkeypatch):

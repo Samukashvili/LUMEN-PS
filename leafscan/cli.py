@@ -36,8 +36,8 @@ def load_config(path=None, overrides=None):
     return cfg
 
 
-def _find_scans(scan_arg, n=4):
-    """Resolve 4 scan paths from a folder (sorted) or an explicit comma list."""
+def _find_scans(scan_arg, supported_counts=(4, 8)):
+    """Resolve 4 or 8 scan paths from a folder or an explicit comma list."""
     p = Path(scan_arg)
     if p.is_dir():
         exts = (".tif", ".tiff", ".png")
@@ -45,12 +45,14 @@ def _find_scans(scan_arg, n=4):
         files = sorted([f for f in p.iterdir()
                         if f.suffix.lower() in exts
                         and not any(s in f.stem.lower() for s in skip)])
-        if len(files) < n:
-            raise SystemExit(f"Need {n} scans in {p}, found {len(files)}: {files}")
-        return files[:n]
+        if len(files) not in supported_counts:
+            raise SystemExit(
+                f"Need exactly 4 or 8 scans in {p}, found {len(files)}: {files}"
+            )
+        return files
     files = [Path(x) for x in str(scan_arg).split(",")]
-    if len(files) != n:
-        raise SystemExit(f"Expected {n} scan paths, got {len(files)}")
+    if len(files) not in supported_counts:
+        raise SystemExit(f"Expected 4 or 8 scan paths, got {len(files)}")
     return files
 
 
@@ -95,7 +97,7 @@ def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
     """Run the full pipeline.
 
     ``log_fn`` — optional callback(str) for streaming progress (the web UI passes
-    one; defaults to print). ``auto_crop`` — crop the 4 scans to a common leaf
+    one; defaults to print). ``auto_crop`` — crop the input scans to a common leaf
     ROI before the full-res solve so large scans fit in memory.
     ``capture_rois`` — optional per-scan (x, y, w, h) bed rectangles in mm (None
     entries = full bed) from the smart-ROI capture; with ``capture_dpi`` (one
@@ -623,7 +625,7 @@ def _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log)
         return lc["az0_deg"], lc["el_deg"], "config"
 
     # Method B — self-cal on a downscaled copy for speed.
-    # Force rejection='none': with 4 samples and 3 unknowns the fit is
+    # Force rejection='none': with 4+ samples and 3 unknowns the fit is
     # overdetermined, so the residual genuinely constrains (az0, el). Under
     # drop_brightest the per-pixel solve is exactly determined and the residual
     # would instead be dominated by the (specular) dropped sample.
@@ -653,7 +655,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="run the full pipeline")
-    r.add_argument("--scans", required=True, help="folder of 4 scans or comma list")
+    r.add_argument("--scans", required=True, help="folder of 4 or 8 scans, or comma list")
     r.add_argument("--out", required=True)
     r.add_argument("--flat", default=None, help="optional flat-field scan")
     r.add_argument("--calib", default=None, help="corrugated 0deg,90deg comma pair")
@@ -689,6 +691,7 @@ def main(argv=None):
     if args.cmd == "run":
         cfg = load_config(args.config)
         scans = _find_scans(args.scans)
+        cfg["align"]["rigid"]["nominal_step_deg"] = 360.0 / len(scans)
         calib_paths = args.calib.split(",") if args.calib else None
         res = run_pipeline(cfg, scans, args.out, flat_path=args.flat,
                            calib_paths=calib_paths, scale=args.scale,

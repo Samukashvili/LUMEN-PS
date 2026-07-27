@@ -25,12 +25,13 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
-APP_VERSION = "2026.07-silhouette-mask-v1"
+APP_VERSION = "2026.07-eight-scan-v1"
 
 
 # ---- models ---------------------------------------------------------------- #
 class NewSession(BaseModel):
     name: str = "Untitled leaf"
+    scan_count: int = S.DEFAULT_SCAN_COUNT
 
 
 class CaptureReq(BaseModel):
@@ -43,6 +44,10 @@ class ConfigReq(BaseModel):
 
 class OutputDirReq(BaseModel):
     path: str | None = None
+
+
+class ScanCountReq(BaseModel):
+    scan_count: int
 
 
 class DeleteSessionReq(BaseModel):
@@ -75,7 +80,10 @@ def api_list_sessions():
 
 @app.post("/api/sessions")
 def api_create_session(body: NewSession):
-    return S.create_session(body.name)
+    try:
+        return S.create_session(body.name, body.scan_count)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/sessions/{sid}")
@@ -103,6 +111,21 @@ def api_set_config(sid: str, body: ConfigReq):
         raise HTTPException(404, "Session not found")
     S.set_overrides(sid, body.overrides)
     return {"config": S.session_config(sid)}
+
+
+@app.put("/api/sessions/{sid}/scan-count")
+def api_set_scan_count(sid: str, body: ScanCountReq):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Wait for the active scanner or reconstruction job to finish")
+    try:
+        meta = S.set_scan_count(sid, body.scan_count)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    meta["ready"] = S.ready_to_run(sid)
+    meta["busy"] = False
+    return meta
 
 
 @app.put("/api/sessions/{sid}/output-dir")
@@ -146,9 +169,11 @@ def api_delete_session(sid: str, body: DeleteSessionReq):
 # ---- capture / run --------------------------------------------------------- #
 @app.post("/api/sessions/{sid}/capture")
 def api_capture(sid: str, body: CaptureReq):
-    if not S.load_meta(sid):
+    meta = S.load_meta(sid)
+    if not meta:
         raise HTTPException(404, "Session not found")
-    if body.role not in S.ALL_ROLES:
+    allowed = set(S.active_leaf_roles(meta)) | set(S.OPTIONAL_ROLES)
+    if body.role not in allowed:
         raise HTTPException(400, f"Unknown role {body.role}")
     if jobs.is_busy(sid):
         raise HTTPException(409, "A job is already running for this session")
@@ -159,10 +184,14 @@ def api_capture(sid: str, body: CaptureReq):
 @app.post("/api/sessions/{sid}/import/{role}")
 def api_import_scan(sid: str, role: str, file: UploadFile = File(...)):
     """Import an externally captured image into one primary scan slot."""
-    if not S.load_meta(sid):
+    meta = S.load_meta(sid)
+    if not meta:
         raise HTTPException(404, "Session not found")
-    if role not in S.LEAF_ROLES:
-        raise HTTPException(400, f"External import is only available for k0-k3, not {role}")
+    active_roles = S.active_leaf_roles(meta)
+    if role not in active_roles:
+        raise HTTPException(
+            400, f"External import is only available for {active_roles[0]}-{active_roles[-1]}, not {role}"
+        )
     if jobs.is_busy(sid):
         raise HTTPException(409, "Wait for the active scanner or reconstruction job to finish")
     try:
@@ -214,10 +243,14 @@ def api_reset_scans(sid: str):
 
 @app.post("/api/sessions/{sid}/run")
 def api_run(sid: str):
-    if not S.load_meta(sid):
+    meta = S.load_meta(sid)
+    if not meta:
         raise HTTPException(404, "Session not found")
     if not S.ready_to_run(sid):
-        raise HTTPException(400, "Need all four rotated scans (k0–k3) first")
+        roles = S.active_leaf_roles(meta)
+        raise HTTPException(
+            400, f"Need all {len(roles)} rotated scans ({roles[0]}-{roles[-1]}) first"
+        )
     if jobs.is_busy(sid):
         raise HTTPException(409, "A job is already running for this session")
     job = jobs.start_run(sid)

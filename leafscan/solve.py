@@ -39,9 +39,10 @@ def _array_backend(requested: str | None):
 def _solve_binary_patterns(I, L, w, solvable, ridge_lambda, xp):
     """Solve binary-weight systems once per distinct sample pattern.
 
-    Four captures produce at most 16 systems. Grouping pixels by pattern avoids
-    constructing and factorizing one 3x3 matrix per pixel, which dominated
-    full-resolution runs after the cleanup pass added another solve.
+    Four captures produce at most 16 systems and eight produce at most 256.
+    Grouping pixels by pattern avoids constructing and factorizing one 3x3
+    matrix per pixel, which dominated full-resolution runs after the cleanup
+    pass added another solve.
     """
     N, P = I.shape
     codes = xp.zeros(P, dtype=xp.uint16)
@@ -49,10 +50,14 @@ def _solve_binary_patterns(I, L, w, solvable, ridge_lambda, xp):
         codes |= (w[k] > 0).astype(xp.uint16) << k
     g = xp.zeros((P, 3), dtype=xp.float32)
     eye = xp.eye(3, dtype=xp.float32)
-    for code in range(1, 1 << N):
-        pix = xp.flatnonzero(solvable & (codes == code))
-        if not pix.size:
+    # Eight inputs have 256 theoretical masks, but production rejection usually
+    # creates only a handful. Visit only masks that actually occur so runtime
+    # scales with the data rather than the full 2**N space.
+    for code_value in xp.unique(codes[solvable]):
+        code = int(code_value.item())
+        if code == 0:
             continue
+        pix = xp.flatnonzero(solvable & (codes == code))
         keep = xp.asarray([(code >> k) & 1 for k in range(N)], dtype=xp.bool_)
         Lk = L[keep]
         inverse = xp.linalg.inv(Lk.T @ Lk + ridge_lambda * eye)
@@ -138,7 +143,7 @@ def photometric_solve(
     if weights is not None:
         w = xp.asarray(weights.reshape(N, P), dtype=xp.float32) * valid
     else:
-        # Weight selection is tiny (four rows) and compute_weights is also used
+        # Weight selection is tiny (four or eight rows) and compute_weights is also used
         # independently by callers, so retain one canonical NumPy implementation.
         w = xp.asarray(compute_weights(np.asarray(I_stack).reshape(N, P),
                                        np.asarray(valid_stack).reshape(N, P)

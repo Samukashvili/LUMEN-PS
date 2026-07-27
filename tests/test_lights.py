@@ -24,6 +24,16 @@ def test_ninety_degrees_apart_in_azimuth():
     assert np.allclose(diffs, 90.0, atol=1e-9)
 
 
+def test_eight_lights_are_forty_five_degrees_apart():
+    thetas = nominal_thetas(n=8, step_deg=45.0)
+    L = light_directions(0.0, 20.0, thetas)
+    az = np.sort(np.rad2deg(np.arctan2(L[:, 1], L[:, 0])) % 360.0)
+    diffs = np.diff(np.r_[az, az[0] + 360.0])
+
+    assert L.shape == (8, 3)
+    assert np.allclose(diffs, 45.0, atol=1e-9)
+
+
 def test_measured_angle_preferred_over_nominal():
     thetas = np.array([0.0, 88.5, 181.2, 269.0])  # imperfect physical rotations
     L = light_directions(95.0, 25.0, thetas)

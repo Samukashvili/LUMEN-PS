@@ -1,4 +1,4 @@
-LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures into normal, albedo, height, and alpha maps using photometric stereo.
+LUMEN-PS is texture-scanning software that turns four or eight flatbed-scanner captures into normal, albedo, height, and alpha maps using photometric stereo.
 
 <div align="center">
 
@@ -6,7 +6,7 @@ LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures i
 
 ### Turn a flatbed scanner into a photometric-stereo material scanner.
 
-Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no camera rig, synchronized lights, or special optics.
+Recover **normal maps, albedo, height, and alpha** from four or eight ordinary scans—no camera rig, synchronized lights, or special optics.
 
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows)
@@ -26,11 +26,11 @@ Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no
 
 ## The idea in one minute
 
-A flatbed scanner already contains a stable moving light and a calibrated line sensor. They sit **extremely close together**, so the lighting difference is genuinely small—easy to miss when two scans are viewed at different rotations. Crucially, however, they are **not perfectly coaxial**. That finite baseline gives the incident light a slight sideways component: a microscopic slope facing the lamp returns a little more light than the same slope facing away. With locked capture settings, registration, linearization, and four observations, that subtle but repeatable signal is enough.
+A flatbed scanner already contains a stable moving light and a calibrated line sensor. They sit **extremely close together**, so the lighting difference is genuinely small—easy to miss when two scans are viewed at different rotations. Crucially, however, they are **not perfectly coaxial**. That finite baseline gives the incident light a slight sideways component: a microscopic slope facing the lamp returns a little more light than the same slope facing away. With locked capture settings, registration, linearization, and at least four observations, that subtle but repeatable signal is enough.
 
 ![Cross-section of the scanner lamp and sensor showing their useful offset](docs/assets/scanner-parallax.svg)
 
-The lamp remains fixed in scanner coordinates. Rotate the subject by 90° between scans and the light appears to orbit it in subject coordinates. After the four images are aligned, each pixel has four measured intensities under four known light directions. That is enough to separate surface orientation from base color.
+The lamp remains fixed in scanner coordinates, so rotating the subject makes the light appear to orbit it in subject coordinates. Choose **4 inputs** for 90° steps and the shortest reliable capture, or **8 inputs** for 45° steps and denser lighting observations. Once the images are aligned, each pixel has enough measured intensities under known light directions to separate surface orientation from base color.
 
 ![Four rotations convert the scanner's fixed lamp into four subject-relative lighting directions](docs/assets/four-directions.svg)
 
@@ -48,12 +48,12 @@ Because the CIS lamp and sensor are so close, the useful difference is much smal
 
 ## Morphing the scans into alignment
 
-The reconstruction is only as good as its registration. Every output pixel must observe the same physical point in all four scans; any residual misalignment is interpreted by the solver as surface slope and becomes fake relief. Placing the four rotations onto one pixel grid is therefore its own small pipeline: rigid first, elastic second, with a per-pixel validity check at the end.
+The reconstruction is only as good as its registration. Every output pixel must observe the same physical point in every selected scan; any residual misalignment is interpreted by the solver as surface slope and becomes fake relief. Placing all rotations onto one pixel grid is therefore its own small pipeline: rigid first, elastic second, with a per-pixel validity check at the end.
 
 ![Registration pipeline: segment the subject, de-rotate rigidly, estimate flow on a lighting-invariant proxy, remap the raw scan once](docs/assets/registration-pipeline.svg)
 
 1. **Segment.** Otsu thresholding on linear luminance separates the darker subject from the bright platen background, followed by morphological cleanup and a largest-component pass. Enclosed bright regions are then filled so white paint, paper, print, and other light details remain inside the subject mask. The resulting solid silhouette anchors everything that follows.
-2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the nominal −90°·k about the subject's centroid and refined twice. First with ECC image alignment run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting; each candidate refinement is accepted only if it does not reduce silhouette overlap, so it can never make the nominal placement worse. Then a **feature-matching pass** takes over: ORB keypoints on contrast-normalized luminance (detected away from the boundary, where per-scan shadow direction jitters the mask) are matched under a tight displacement budget and fit to a rigid transform with RANSAC, iterated to convergence. A correction is accepted only when it measurably improves dense high-pass image agreement — a lighting-robust check that catches spatially clustered false consensus. This matters because hand-placed rotations are genuinely 0.5–2° off the nominal 90° steps, an error the mask outline cannot reveal but interior texture can.
+2. **De-rotate.** When a fiducial card is present, shared ArUco markers give the rigid transform directly. Otherwise the scan is rotated by the selected nominal step (−90°·k for four inputs or −45°·k for eight) about the subject's centroid and refined twice. First with ECC image alignment run on the masks' distance transforms rather than the images, so the refinement cannot be biased by lighting; each candidate refinement is accepted only if it does not reduce silhouette overlap, so it can never make the nominal placement worse. Then a **feature-matching pass** takes over: ORB keypoints on contrast-normalized luminance (detected away from the boundary, where per-scan shadow direction jitters the mask) are matched under a tight displacement budget and fit to a rigid transform with RANSAC, iterated to convergence. A correction is accepted only when it measurably improves dense high-pass image agreement — a lighting-robust check that catches spatially clustered false consensus. This matters because hand-placed rotations are genuinely 0.5–2° off the nominal step, an error the mask outline cannot reveal but interior texture can.
 3. **Proxy flow.** A rigid transform is not enough for a leaf, a pressed flower, or fabric: handling it between rotations lets it settle slightly differently each time. Dense DIS optical flow measures that elastic deformation — but on a purpose-built proxy image, never on the raw pixels.
 4. **Remap once.** The flow field is smoothed, clamped to a sane maximum displacement (600 px at full resolution by default), and applied to the full-detail original in a single interpolation, so no detail is lost to repeated resampling. Pixels that end up covered by fewer than three warped views are excluded from the solve as underdetermined.
 
@@ -85,13 +85,13 @@ This mask is shared by cropping, alignment, per-pixel validity, height integrati
 
 | Stage | What happens | Why it matters |
 |:--|:--|:--|
-| **1 · Capture** | Scan at 0°, 90°, 180°, and 270° with identical exposure and color settings. | Produces four observations with different subject-relative light azimuths. |
+| **1 · Capture** | Choose 4 inputs at 90° intervals or 8 at 45° intervals, with identical exposure and color settings. | Produces a complete orbit of subject-relative light azimuths. |
 | **2 · Linearize** | Undo sRGB gamma and optionally divide by a blank-card flat field. | Photometric stereo requires pixel values proportional to received light. |
-| **3 · Register** | De-rotate using fiducials, refine rigidly with mask ECC and iterated feature matching, then correct small elastic changes. | The same output pixel must represent the same physical point in all four scans. |
+| **3 · Register** | De-rotate using fiducials, refine rigidly with mask ECC and iterated feature matching, then correct small elastic changes. | The same output pixel must represent the same physical point in every scan. |
 | **4 · Calibrate** | Fit lamp azimuth and elevation from a calibration card or from re-render error. | The light elevation controls how strongly recovered normals tilt. |
 | **5 · Solve** | Robustly solve `I = ρ(N · L)` per pixel, dropping highlight/shadow outliers. | Separates lighting-free albedo `ρ` from surface normal `N`. |
 | **6 · Repair** | Detect locally inconsistent normals, identify a bad scan by leave-one-out re-solving, and selectively inpaint only unrecoverable pixels. | Removes registration/gloss artifacts without smoothing away trustworthy vein relief. |
-| **7 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
+| **7 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render every input view. | Residual images show where the model explains—or fails to explain—the measurements. |
 
 ### What comes out
 
@@ -131,7 +131,7 @@ For a mostly matte (Lambertian) point, brightness under light `k` is approximate
 Iₖ = ρ max(N · Lₖ, 0)
 ```
 
-`Iₖ` is measured intensity, `ρ` is lighting-independent albedo, `N` is the unknown surface normal, and `Lₖ` is the calibrated light vector. Four rotations give four equations. The solver estimates the three components of `ρN`, normalizes that vector to obtain `N`, and keeps its length as `ρ`.
+`Iₖ` is measured intensity, `ρ` is lighting-independent albedo, `N` is the unknown surface normal, and `Lₖ` is the calibrated light vector. Four or eight rotations provide an overdetermined system. The solver estimates the three components of `ρN`, normalizes that vector to obtain `N`, and keeps its length as `ρ`.
 
 Two practical details make the result far better than a textbook least-squares solve:
 
@@ -148,7 +148,7 @@ The cleanup pass works in four steps:
 
 1. **Detect candidates.** A pixel becomes suspect when its normal differs from the local 5 px component-median field, or when its albedo-normalized re-render residual is extreme. The residual test catches coherent artifact patches that can agree with their own local median.
 2. **Build trusted context.** Non-suspect neighboring normals form a smooth reference direction. Empty support is filled with bounded, linear-time nearest-supported interpolation—there is no unbounded large-kernel blur.
-3. **Identify the offending observation.** For each suspect pixel, the solver tries four leave-one-out candidates (`−k0` through `−k3`). It accepts the candidate closest to trusted context only when the angular agreement improves by the configured margin.
+3. **Identify the offending observation.** For each suspect pixel, the solver tries one leave-one-out candidate per selected scan. It accepts the candidate closest to trusted context only when the angular agreement improves by the configured margin.
 4. **Merge conservatively.** A pixel that remains both far from trusted context and photometrically inconsistent is inpainted from its surroundings. A sharp but self-consistent normal is retained, and all repaired normals are renormalized before height integration and export.
 
 ![Hand-made pixel-level illustration of suspect normal detection, three-scan repair, selective neighborhood inpainting, and the final coherent normal field](docs/assets/normal-pixel-repair.svg)
@@ -165,8 +165,8 @@ The 1200 dpi pipeline can operate on tens of millions of pixels, so LUMEN-PS use
 
 | Workload | Backend in `auto` mode | Optimization |
 |:--|:--|:--|
-| Photometric normal solve | CPU | Four binary sample weights produce at most 16 distinct 3×3 systems. Each system is inverted once, then applied to all matching pixels—no per-pixel matrix factorization. |
-| RGB albedo recovery | NVIDIA CUDA | Processes VRAM-aware row tiles, avoiding a full four-view RGB stack allocation on the GPU. |
+| Photometric normal solve | CPU | Binary sample weights produce at most 16 distinct 3×3 systems with four inputs or 256 with eight. Each encountered system is inverted once, then applied to all matching pixels—no per-pixel matrix factorization. |
+| RGB albedo recovery | NVIDIA CUDA | Processes VRAM-aware row tiles, avoiding a full multi-view RGB stack allocation on the GPU. |
 | QA re-render + residuals | NVIDIA CUDA | Computes predicted lighting and absolute residuals in bounded tiles. |
 | Height integration | NVIDIA CUDA | Runs the Frankot–Chellappa FFT in float32 on the GPU. The CPU fallback also uses float32 to halve its previous peak memory. |
 | Alignment and optical flow | CPU/OpenCV | Remains CPU-side to preserve the established interpolation and registration behavior; OpenCV is capped at four threads by default so the desktop stays responsive. |
@@ -186,7 +186,7 @@ runtime:
 
 ## Fast area scan and memory-aware cropping
 
-Scanning the full bed four times at 1200 dpi is slow and produces four ~350-megapixel-bed images that are mostly empty platen. Two cooperating features keep both the scanner and the solver working only on the subject:
+Scanning the full bed four or eight times at 1200 dpi is slow and produces huge images that are mostly empty platen. Two cooperating features keep both the scanner and the solver working only on the subject:
 
 **Fast area scan** (`capture.smart_roi`) runs a quick 75 dpi locator pass over the whole bed, detects the subject against the platen background, and then performs the high-dpi detail scan over just the detected area plus a safety margin (10 mm by default). Detection deliberately ignores anything hugging the preview border — the bed edge, calibration strip, and lid seam leave dark slivers there that would otherwise balloon the region to the full bed. Because scanner drivers snap scan windows to their own grid (the tested HP rounds extents up to multiples of 8 px), the session records the rectangle the driver *actually* scanned, not the requested one, along with the dpi each capture used.
 
@@ -196,8 +196,8 @@ For the PCB example above this meant ~20 MB per capture, the scan head stopping 
 
 ### Details hidden inside the simple idea
 
-- **Four scans are deliberate.** Two intensity measurements cannot determine a three-component scaled normal. Three is the mathematical minimum; the fourth gives the solver room to reject one highlight or shadow and still remain determined.
-- **The four lights lie on one cone.** Rotation changes azimuth, not elevation. A wrong elevation can still produce plausible-looking normals with systematically exaggerated or flattened relief, so LUMEN-PS fits elevation instead of guessing it.
+- **Four scans remain the reliable baseline.** Two intensity measurements cannot determine a three-component scaled normal. Three is the mathematical minimum; the fourth gives the solver room to reject one highlight or shadow and still remain determined. Eight inputs add angular sampling and redundancy when the subject can be rotated accurately in 45° steps.
+- **Every selected light lies on one cone.** Rotation changes azimuth, not elevation. A wrong elevation can still produce plausible-looking normals with systematically exaggerated or flattened relief, so LUMEN-PS fits elevation instead of guessing it.
 - **The scanner is repeatable in ways a hand-held camera is not.** Focus, sensor path, working distance, and lamp-to-sensor geometry are mechanically fixed on every pass.
 - **Color contains an extra botanical clue.** For leaves, red light penetrates tissue more deeply than blue. LUMEN-PS writes an `R − B` subsurface hint for QA or shading experiments, but deliberately does not let it drive the normal solve. This leaf-specific bonus is optional; the core reconstruction works on other diffuse subjects.
 - **Normals and height answer different questions.** The normal map is the direct photometric result and preserves fine local slope. Height is obtained by integrating that slope field, so it is useful for relief but more sensitive to low-frequency drift and boundary conditions.
@@ -222,7 +222,7 @@ The printer portion is irrelevant; LUMEN-PS needs a compatible **flatbed scanner
 | Windows driver exposed through **WIA 2.0** | **Yes** | Current automatic capture is Windows/WIA. CLI processing can operate on suitable lossless scans captured another way. |
 | Flatbed platen | **Yes** | Sheet-fed/ADF scanners cannot keep and rotate the subject on a common plane. |
 | Directional, repeatable moving lamp | **Yes** | CIS units commonly have the useful lamp–sensor offset; verify by comparing highlights in 0° and 90° scans. |
-| Manual or lockable brightness/contrast/color | **Strongly recommended** | All four scans need identical processing. Disable auto exposure/color, sharpening, and enhancement where the driver allows it. |
+| Manual or lockable brightness/contrast/color | **Strongly recommended** | Every scan needs identical processing. Disable auto exposure/color, sharpening, and enhancement where the driver allows it. |
 | 24-bit color, lossless PNG/TIFF | **Yes** | Never feed JPEG captures to the reconstruction. The tested HP WIA driver is 8-bit per channel, so LUMEN-PS linearizes sRGB in software. |
 | 600 dpi or higher optical resolution | **Recommended** | 1200 dpi is supported and captures fine relief; 600 dpi is faster and often sufficient. |
 | Enough platen clearance | **Yes** | The subject and fiducial card must lie flat without forcing the lid or loading the glass. |

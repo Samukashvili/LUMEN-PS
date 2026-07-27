@@ -73,7 +73,7 @@ align:
     # Solid silhouette is safest for white/light subject details. Enable only
     # for genuinely perforated subjects: it also removes enclosed white areas.
     detect_interior_holes: false
-    min_valid_samples: 3          # valid pixel needs >=3 of 4 warped samples
+    min_valid_samples: 3          # valid pixel needs at least 3 warped samples
 
 solve:
   rejection: "drop_brightest"     # none | drop_brightest | drop_brightest_and_darkest

@@ -221,7 +221,14 @@ button{font-family:inherit}
 .capture-settings span:not(.mono){font-size:12px; color:var(--dim)}
 .capture-settings .mono{font-size:10.5px}
 .capture-settings--expanded{padding:14px 16px; gap:18px 24px}
-.capture-settings--expanded>div:first-child{display:flex; align-items:center; gap:10px}
+.capture-setting{display:flex; align-items:center; gap:10px}
+.capture-count-setting{display:grid;grid-template-columns:auto auto;gap:5px 10px;align-items:center}
+.capture-count-setting>small{grid-column:1/-1;font-family:var(--mono);font-size:9.5px;color:var(--dim)}
+.scan-count-seg button{display:grid;grid-template-columns:auto auto;align-items:baseline;gap:6px;padding:5px 11px}
+.scan-count-seg button b{font-family:var(--disp);font-size:17px;font-weight:700}
+.scan-count-seg button span{font-family:var(--mono);font-size:9px!important}
+.scan-count-seg button:disabled{cursor:not-allowed;opacity:.58}
+.scan-count-seg button.on:disabled{opacity:1}
 .capture-speed{display:flex; align-items:center; gap:10px; flex:1; min-width:290px}
 .capture-speed>div{display:flex; flex-direction:column; line-height:1.35}
 .capture-speed b{font-weight:500; color:var(--text)}
@@ -247,6 +254,8 @@ button{font-family:inherit}
 .slot-cap{display:flex; align-items:center; justify-content:space-between;
   position:relative;z-index:3;flex:0 0 auto;padding:8px 10px;font-family:var(--mono);
   font-size:11px;border-bottom:1px solid var(--line);background:var(--panel)}
+.slot-label{display:flex;align-items:baseline;gap:8px}
+.slot-angle{font-size:9px;color:var(--amber);letter-spacing:.08em}
 .slot-body{flex:1;min-height:0;display:grid;place-items:center;color:var(--dim);
   position:relative;overflow:hidden;isolation:isolate}
 .slot-body img{position:absolute;inset:0;z-index:0;display:block;width:100%;height:100%;

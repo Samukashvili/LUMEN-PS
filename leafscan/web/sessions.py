@@ -2,7 +2,7 @@
 
 sessions/<id>/
   session.json   name, timestamps, status, scan roles present, config overrides
-  scans/         k0..k3.png (+ optional flat.png, calib0.png, calib90.png)
+  scans/         k0..k7.png (+ optional flat.png, calib0.png, calib90.png)
   out/           pipeline outputs + qa/
 """
 from __future__ import annotations
@@ -23,7 +23,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSIONS_DIR = REPO_ROOT / "sessions"
 CONFIG_PATH = REPO_ROOT / "leafscan" / "config.yaml"
 
-LEAF_ROLES = ["k0", "k1", "k2", "k3"]
+SUPPORTED_SCAN_COUNTS = (4, 8)
+DEFAULT_SCAN_COUNT = 4
+LEAF_ROLES = [f"k{i}" for i in range(max(SUPPORTED_SCAN_COUNTS))]
 OPTIONAL_ROLES = ["flat", "calib0", "calib90"]
 ALL_ROLES = LEAF_ROLES + OPTIONAL_ROLES
 
@@ -77,7 +79,22 @@ def load_meta(sid: str) -> dict | None:
     if not p.exists():
         return None
     with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+        meta = json.load(f)
+    # Keep sessions created before the 8-input option fully compatible.
+    try:
+        count = int(meta.get("scan_count", DEFAULT_SCAN_COUNT))
+    except (TypeError, ValueError):
+        count = DEFAULT_SCAN_COUNT
+    meta["scan_count"] = count if count in SUPPORTED_SCAN_COUNTS else DEFAULT_SCAN_COUNT
+    for key in ("scans", "capture_sources"):
+        values = meta.setdefault(key, {})
+        for role in ALL_ROLES:
+            values.setdefault(role, False if key == "scans" else None)
+    for key in ("capture_rois", "capture_dpis"):
+        values = meta.setdefault(key, {})
+        for role in LEAF_ROLES:
+            values.setdefault(role, None)
+    return meta
 
 
 def save_meta(meta: dict) -> dict:
@@ -89,7 +106,9 @@ def save_meta(meta: dict) -> dict:
     return meta
 
 
-def create_session(name: str) -> dict:
+def create_session(name: str, scan_count: int = DEFAULT_SCAN_COUNT) -> dict:
+    if scan_count not in SUPPORTED_SCAN_COUNTS:
+        raise ValueError(f"Scan count must be one of {SUPPORTED_SCAN_COUNTS}")
     ts = time.strftime("%Y%m%d-%H%M%S")
     sid = f"{_slugify(name)}-{ts}"
     meta = {
@@ -98,8 +117,10 @@ def create_session(name: str) -> dict:
         "created": _now(),
         "updated": _now(),
         "status": "capturing",          # capturing | ready | processing | done | error
+        "scan_count": scan_count,
         "scans": {r: False for r in ALL_ROLES},
         "capture_rois": {r: None for r in LEAF_ROLES},
+        "capture_dpis": {r: None for r in LEAF_ROLES},
         "capture_sources": {r: None for r in ALL_ROLES},
         "config_overrides": {},
         "output_dir": None,             # None => sessions/<id>/out
@@ -125,6 +146,12 @@ def list_sessions() -> list[dict]:
 def record_scan(sid: str, role: str, roi_mm=None, dpi=None,
                 source: str = "scanner") -> dict:
     meta = load_meta(sid)
+    if not meta:
+        raise FileNotFoundError("Session not found")
+    if role not in ALL_ROLES:
+        raise ValueError(f"Unknown scan role {role}")
+    if role in LEAF_ROLES and role not in active_leaf_roles(meta):
+        raise ValueError(f"{role} is not active in this {meta['scan_count']}-scan session")
     meta["scans"][role] = True
     meta.setdefault("capture_sources", {})[role] = source
     if role in LEAF_ROLES:
@@ -135,7 +162,7 @@ def record_scan(sid: str, role: str, roi_mm=None, dpi=None,
     # Any replacement source makes prior outputs stale. Keep the files on disk
     # until the next run, but do not present them as results for the new capture.
     meta["result"] = None
-    meta["status"] = "ready" if all(meta["scans"][r] for r in LEAF_ROLES) else "capturing"
+    meta["status"] = "ready" if all(meta["scans"][r] for r in active_leaf_roles(meta)) else "capturing"
     return save_meta(meta)
 
 
@@ -147,10 +174,12 @@ def import_scan(sid: str, role: str, stream) -> dict:
     """
     from PIL import Image, ImageOps, UnidentifiedImageError
 
-    if role not in LEAF_ROLES:
-        raise ValueError(f"External import is only available for {', '.join(LEAF_ROLES)}")
-    if not load_meta(sid):
+    meta = load_meta(sid)
+    if not meta:
         raise FileNotFoundError("Session not found")
+    active_roles = active_leaf_roles(meta)
+    if role not in active_roles:
+        raise ValueError(f"External import is only available for {', '.join(active_roles)}")
 
     scan_root = scans_dir(sid)
     scan_root.mkdir(parents=True, exist_ok=True)
@@ -186,11 +215,12 @@ def import_scan(sid: str, role: str, stream) -> dict:
 
 def remove_imported_scan(sid: str, role: str) -> dict:
     """Remove one externally imported primary scan without touching its peers."""
-    if role not in LEAF_ROLES:
-        raise ValueError(f"External scan removal is only available for {', '.join(LEAF_ROLES)}")
     meta = load_meta(sid)
     if not meta:
         raise FileNotFoundError("Session not found")
+    active_roles = active_leaf_roles(meta)
+    if role not in active_roles:
+        raise ValueError(f"External scan removal is only available for {', '.join(active_roles)}")
     if (meta.get("capture_sources") or {}).get(role) != "imported":
         raise ValueError(f"{role} is not an imported scan")
 
@@ -224,6 +254,41 @@ def reset_scans(sid: str) -> dict:
     meta["capture_rois"] = {role: None for role in LEAF_ROLES}
     meta["capture_dpis"] = {role: None for role in LEAF_ROLES}
     meta["capture_sources"] = {role: None for role in ALL_ROLES}
+    meta["status"] = "capturing"
+    meta["result"] = None
+    return save_meta(meta)
+
+
+def active_leaf_roles(meta_or_sid: dict | str) -> list[str]:
+    """Return the ordered primary roles selected for a session."""
+    meta = load_meta(meta_or_sid) if isinstance(meta_or_sid, str) else meta_or_sid
+    count = int((meta or {}).get("scan_count", DEFAULT_SCAN_COUNT))
+    if count not in SUPPORTED_SCAN_COUNTS:
+        count = DEFAULT_SCAN_COUNT
+    return LEAF_ROLES[:count]
+
+
+def set_scan_count(sid: str, scan_count: int) -> dict:
+    """Select 4 or 8 primary inputs before capture begins.
+
+    Once a primary scan exists, changing the count would reinterpret its
+    physical angle (90-degree steps versus 45-degree steps), so the session
+    must be reset first.
+    """
+    if scan_count not in SUPPORTED_SCAN_COUNTS:
+        raise ValueError(f"Scan count must be one of {SUPPORTED_SCAN_COUNTS}")
+    meta = load_meta(sid)
+    if not meta:
+        raise FileNotFoundError("Session not found")
+    if scan_count == meta["scan_count"]:
+        return meta
+    primary_exists = any(
+        meta["scans"].get(role) or (scans_dir(sid) / f"{role}.png").exists()
+        for role in LEAF_ROLES
+    )
+    if primary_exists:
+        raise ValueError("Reset the primary scans before changing the scan count")
+    meta["scan_count"] = scan_count
     meta["status"] = "capturing"
     meta["result"] = None
     return save_meta(meta)
@@ -288,8 +353,8 @@ def session_config(sid: str) -> dict:
 
 
 def leaf_scan_paths(sid: str) -> list[Path]:
-    return [scans_dir(sid) / f"{r}.png" for r in LEAF_ROLES]
+    return [scans_dir(sid) / f"{r}.png" for r in active_leaf_roles(sid)]
 
 
 def ready_to_run(sid: str) -> bool:
-    return all((scans_dir(sid) / f"{r}.png").exists() for r in LEAF_ROLES)
+    return all((scans_dir(sid) / f"{r}.png").exists() for r in active_leaf_roles(sid))

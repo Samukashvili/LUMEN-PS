@@ -12,10 +12,10 @@ session):
 
 * Per-pixel residual thresholds alone can't work: leaves are not Lambertian
   (gloss, subsurface), so the all-samples residual has a huge floor (median
-  leave-one-out rel ~ 0.3). And with 4 symmetric cone lights the residual
-  space is ONE-dimensional (null vector ~ (1,-1,1,-1)): any single-sample
-  error yields equal-magnitude residuals on every scan, so WHICH scan is bad
-  is unidentifiable from one pixel alone.
+  leave-one-out rel ~ 0.3). In the verified four-light case the residual space
+  is one-dimensional (null vector ~ (1,-1,1,-1)): any single-sample error
+  yields equal-magnitude residuals on every scan, so WHICH scan is bad is
+  unidentifiable from one pixel alone.
 * Normal-space flushness alone misses coherent artifact blobs (up to ~100 px
   wide) that agree with their own local median.
 
@@ -29,7 +29,7 @@ So this module combines them:
    the only sound way (see above). Genuine sharp features keep their original
    solution because no candidate improves them.
 3. FILL: pixels still far from the reference AND physically inconsistent
-   (>= 2 bad samples of 4 — unrecoverable) are returned in ``fill`` for
+   after the leave-one-out candidates are returned in ``fill`` for
    inpainting. Consistent-but-sharp pixels are never filled.
 """
 from __future__ import annotations

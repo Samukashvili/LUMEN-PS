@@ -1,7 +1,7 @@
 """Alignment pipeline — spec §6. Order matters; this has the most failure modes.
 
   1. segment the leaf (masking, §6.5)
-  2. rigid align scan k -> scan 0 (fiducials if present, else nominal 90*k + ECC
+  2. rigid align scan k -> scan 0 (fiducials if present, else nominal step*k + ECC
      on a *lighting-invariant* proxy, §6.2)
   3. non-rigid warp on a lighting-invariant proxy, applied to the ORIGINAL image
      (§6.4) — NEVER optical flow on the raw differently-lit images
@@ -155,7 +155,7 @@ def rigid_align(
     """Align moving scan k to the reference. Returns (warped_mov_luma, warped_extra,
     theta_deg, method).
 
-    Prefers fiducials; else de-rotate by nominal -k*90 about the leaf centroid and
+    Prefers fiducials; else de-rotate by the configured nominal step about the leaf centroid and
     refine with ECC on the mask distance transform (lighting-invariant).
     """
     cfg = cfg or {}
@@ -175,7 +175,7 @@ def rigid_align(
             M, _ = cv2.estimateAffinePartial2D(src, dst, method=cv2.LMEDS)
             method = f"fiducials({len(common)})"
 
-    # ---- fallback: nominal 90*k about centroid + ECC refine ----
+    # ---- fallback: configured nominal step*k about centroid + ECC refine ----
     if M is None:
         rcfg = cfg.get("rigid", {})
         step = rcfg.get("nominal_step_deg", 90.0)

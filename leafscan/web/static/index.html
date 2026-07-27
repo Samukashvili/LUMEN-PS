@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LUMEN-PS · photometric stereo bench</title>
 <link rel="stylesheet" href="/static/css/fonts.css">
-<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/app.css?v=2026.07-eight-scan-v1">
 </head>
 <body>
 <!-- CRT overlays (disabled under prefers-reduced-motion) -->
@@ -17,7 +17,7 @@
 <header class="topbar">
   <div class="brand">
     <span class="mark">LUMEN&#8209;PS</span>
-    <span class="model">MODEL&nbsp;PS&#8209;4 · PHOTOMETRIC STEREO BENCH</span>
+    <span class="model">MODEL&nbsp;PS&#8209;4/8 · PHOTOMETRIC STEREO BENCH</span>
   </div>
   <div class="topbar-actions">
     <div id="device-pill" class="pill pill--idle" title="Scanner status">
@@ -35,7 +35,7 @@
     <div class="boot-sweep" aria-hidden="true"></div>
     <h1 class="boot-title">LUMEN&#8209;PS</h1>
     <p class="boot-sub">Reconstructs a leaf's normal map by turning a flatbed
-      scanner into a four-light photometric-stereo rig.</p>
+      scanner into a four- or eight-light photometric-stereo rig.</p>
 
     <div id="boot-device" class="boot-device">
       <span class="led"></span>
@@ -73,7 +73,7 @@
        aria-describedby="reset-scans-description">
     <div class="eyebrow">Destructive action</div>
     <h2 id="reset-scans-title">Reset every scan?</h2>
-    <p id="reset-scans-description">This permanently removes k0 through k3 and any optional reference scans.
+    <p id="reset-scans-description">This permanently removes every primary and optional reference scan.
       Scan settings and exported result files are preserved, but the session returns to its first capture.</p>
     <div class="modal-actions">
       <button id="reset-scans-cancel" class="btn btn--ghost" type="button">Keep scans</button>
@@ -87,7 +87,7 @@
        aria-describedby="remove-import-description">
     <div class="eyebrow">Imported scan</div>
     <h2 id="remove-import-title">Remove this scan?</h2>
-    <p id="remove-import-description">Only this imported scan will be removed. The other three captures stay in place.</p>
+    <p id="remove-import-description">Only this imported scan will be removed. The other captures stay in place.</p>
     <div class="modal-actions">
       <button id="remove-import-cancel" class="btn btn--ghost" type="button">Keep scan</button>
       <button id="remove-import-confirm" class="btn btn--danger" type="button">Remove scan</button>
@@ -154,6 +154,6 @@
   </aside>
 </div>
 
-<script type="module" src="/static/js/app.js"></script>
+<script type="module" src="/static/js/app.js?v=2026.07-eight-scan-v1"></script>
 </body>
 </html>

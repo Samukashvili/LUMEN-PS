@@ -25,6 +25,7 @@ export const api = {
   session: (sid) => J('GET', `/api/sessions/${sid}`),
   getConfig: (sid) => J('GET', `/api/sessions/${sid}/config`),
   setConfig: (sid, overrides) => J('PUT', `/api/sessions/${sid}/config`, { overrides }),
+  setScanCount: (sid, scanCount) => J('PUT', `/api/sessions/${sid}/scan-count`, { scan_count: scanCount }),
   setOutputDir: (sid, path) => J('PUT', `/api/sessions/${sid}/output-dir`, { path }),
   chooseOutputDir: () => J('POST', '/api/choose-output-dir'),
   deleteSession: (sid, deleteFiles) => J('DELETE', `/api/sessions/${sid}`, { delete_files: deleteFiles }),

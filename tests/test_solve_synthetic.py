@@ -45,6 +45,20 @@ def test_recovers_known_surface():
     assert rel.mean() < 0.01
 
 
+def test_recovers_known_surface_with_eight_observations():
+    N_true, rho_true = _synthetic_surface(H=48, W=64)
+    thetas = nominal_thetas(n=8, step_deg=45.0)
+    L = light_directions(90.0, 35.0, thetas)
+    I = np.clip(np.einsum("hwc,nc->nhw", N_true, L), 0, None) * rho_true[None]
+
+    out = photometric_solve(I, L, rejection="drop_brightest", min_surviving=3)
+    ang = _angular_error_deg(out["normal"], N_true, out["valid"])
+
+    assert out["valid"].all()
+    assert out["weights"].shape[0] == 8
+    assert ang.mean() < 0.5 and ang.max() < 3.0
+
+
 def test_drop_brightest_kills_specular_outlier():
     N_true, rho_true = _synthetic_surface()
     L = light_directions(90.0, 35.0, nominal_thetas())

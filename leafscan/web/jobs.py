@@ -212,7 +212,12 @@ def _run_pipeline_job(job: dict, sid: str):
     try:
         from ..cli import run_pipeline
         cfg = S.session_config(sid)
+        meta = S.load_meta(sid) or {}
+        roles = S.active_leaf_roles(meta)
         scans = S.leaf_scan_paths(sid)
+        # The input count defines the physical capture interval. Keep the
+        # registration fallback aligned with the instructions shown in the UI.
+        cfg["align"]["rigid"]["nominal_step_deg"] = 360.0 / len(roles)
         flat = S.scans_dir(sid) / "flat.png"
         c0 = S.scans_dir(sid) / "calib0.png"
         c90 = S.scans_dir(sid) / "calib90.png"
@@ -220,13 +225,12 @@ def _run_pipeline_job(job: dict, sid: str):
         auto_crop = bool(cfg.get("runtime", {}).get("auto_crop", True))
         # Smart-ROI captures record their glass rectangle per scan; hand the
         # geometry to the pipeline so it can rebuild a common bed canvas.
-        meta = S.load_meta(sid) or {}
         rois = meta.get("capture_rois") or {}
-        capture_rois = [rois.get(r) for r in S.LEAF_ROLES]
+        capture_rois = [rois.get(r) for r in roles]
         dpis = meta.get("capture_dpis") or {}
         # per-scan dpi list: geometry placement must honour the dpi each ROI
         # was actually captured at, not one session-wide value
-        capture_dpi = [dpis.get(r) or cfg["capture"]["dpi"] for r in S.LEAF_ROLES]
+        capture_dpi = [dpis.get(r) or cfg["capture"]["dpi"] for r in roles]
 
         res = run_pipeline(
             cfg, scans, S.out_dir(sid),
@@ -238,6 +242,7 @@ def _run_pipeline_job(job: dict, sid: str):
         )
         summary = {
             "az0": res["az0"], "el": res["el"], "thetas": res["thetas"],
+            "scan_count": len(roles),
             "valid_px": res["valid_px"],
             "residual_means": [round(s["mean"], 4) for s in res["residual"]],
         }
