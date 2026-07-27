@@ -4,12 +4,12 @@ import { Relight } from './relight.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-silhouette-mask-v1';
+const EXPECTED_BACKEND = '2026.07-roughness-v1';
 const STAGES = ['capture', 'process', 'results'];
 const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
-  '[valid]': 1, '[calib]': 2, '[solve]': 3, '[integrate]': 4,
-  '[out]': 5, '[qa]': 5, '[done]': 6 };
-const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Integrate', 'Output'];
+  '[valid]': 1, '[calib]': 2, '[solve]': 3, '[roughness]': 4, '[integrate]': 5,
+  '[out]': 6, '[qa]': 6, '[done]': 7 };
+const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Roughness', 'Integrate', 'Output'];
 
 const RESULT_META = {
   'normal_gl.png': ['OpenGL normal', 'Material map'],
@@ -18,12 +18,19 @@ const RESULT_META = {
   'albedo.png': ['Albedo (linear)', 'Material map'],
   'alpha.png': ['Alpha', 'Material map'],
   'height.png': ['Height', 'Material map'],
+  'roughness.png': ['Roughness (selected)', 'Material map'],
+  'roughness_consensus.png': ['Roughness — consensus', 'Material map'],
+  'roughness_ggx.png': ['Roughness — GGX', 'Material map'],
+  'roughness_beckmann.png': ['Roughness — Beckmann', 'Material map'],
+  'roughness_ward.png': ['Roughness — Ward', 'Material map'],
   'albedo_srgb_rgba.png': ['Albedo RGBA', 'Material map'],
   'normal_gl_rgba.png': ['Normal RGBA', 'Material map'],
   'qa/normal_preview.png': ['Normal preview', 'Diagnostics'],
   'qa/subsurface_hint.png': ['Subsurface hint', 'Diagnostics'],
   'qa/mask_agreement.png': ['Mask agreement', 'Diagnostics'],
   'qa/rejection_coverage.png': ['Rejection coverage', 'Diagnostics'],
+  'qa/roughness_detail_preview.png': ['Roughness detail preview', 'Diagnostics'],
+  'qa/roughness_model_agreement.png': ['Roughness model agreement', 'Diagnostics'],
 };
 
 const S = {
@@ -51,9 +58,9 @@ function toggleControl(path, label, note) {
     <button class="tgl" type="button" role="switch" data-path="${path}"
       aria-checked="${!!getPath(S.cfg, path)}" aria-label="${label}"></button></div>`;
 }
-function numberControl(path, label, note, step = 1, min = null) {
+function numberControl(path, label, note, step = 1, min = null, max = null) {
   return `<div class="field"><div class="lab"><b>${label}</b><small>${note}</small></div>
-    <input type="number" data-path="${path}" step="${step}" ${min === null ? '' : `min="${min}"`}
+    <input type="number" data-path="${path}" step="${step}" ${min === null ? '' : `min="${min}"`} ${max === null ? '' : `max="${max}"`}
       value="${getPath(S.cfg, path)}" aria-label="${label}"></div>`;
 }
 function selectControl(path, label, note, options) {
@@ -408,6 +415,15 @@ function renderProcess() {
           ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}
           ${toggleControl('align.mask.detect_interior_holes', 'Detect holes in subject', 'Optional for perforated subjects. Warning: this can rotoscope white parts of the object.')}</div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Output maps</b><small>Edges, relief, and transparency.</small></div></div>
+          ${toggleControl('roughness.enabled', 'Roughness map', 'Fit specular response without stretching the result to a 0–1 range.')}
+          ${selectControl('roughness.method', 'Roughness method', 'Compare all models or choose the primary estimator.', [
+            ['compare', 'Compare all (consensus primary)'], ['ggx', 'GGX / Trowbridge–Reitz'],
+            ['beckmann', 'Beckmann'], ['ward', 'Ward']])}
+          ${numberControl('roughness.baseline', 'Roughness baseline', 'Eye-estimated dominant roughness; measured deviations are translated around it.', 0.01, 0.02, 1)}
+          ${selectControl('roughness.baseline_statistic', 'Baseline target', 'Which centre of the extracted map is moved to the baseline.', [
+            ['median', 'Dominant / median'], ['mode', 'Histogram mode'], ['mean', 'Average / mean']])}
+          ${numberControl('roughness.detail_strength', 'Roughness detail', 'Scales deviations around the baseline without normalizing the range.', 0.05, 0)}
+          ${numberControl('roughness.max_deviation', 'Maximum deviation', 'Limits departure above or below the baseline; this is a physical prior, not normalization.', 0.01, 0, 0.5)}
           ${toggleControl('integrate.enabled', 'Height map', 'Integrate normals into a relief map.')}
           ${toggleControl('output.alpha.enabled', 'Alpha map', 'Export silhouette and RGBA convenience maps.')}
           ${numberControl('output.alpha.feather_px', 'Alpha feather', 'Softness at the silhouette edge, in pixels.', 0.5, 0)}
@@ -545,6 +561,7 @@ async function renderResults() {
         <div id="relight-panel" class="relight result-display"><canvas id="rl"></canvas><div class="relight-hud">drag across the specimen to move the light</div>
           <div class="relight-ctrls"><div class="ctrl">elevation <input type="range" id="rl-el" min="8" max="85" value="35"></div>
           <div class="ctrl">ambient <input type="range" id="rl-amb" min="0" max="60" value="12"></div>
+          <div class="ctrl">specular <input type="range" id="rl-spec" min="0" max="200" value="100"></div>
           <div class="ctrl">normal <span class="seg" id="rl-conv"><button class="on" data-v="gl">GL</button><button data-v="dx">DX</button></span></div>
           <div class="ctrl">backdrop <span class="seg" id="rl-bg"><button class="on" data-v="1">grid</button><button data-v="0">dark</button></span></div></div></div>
         <div id="map-panel" class="map-panel result-display" hidden><div class="map-canvas checker" id="map-canvas"><img id="map-image" alt="Selected result map"></div>
@@ -581,10 +598,13 @@ function wireResults(files) {
     disposeRelight();
     const rl = new Relight($('#rl'));
     rl.load(api.resultURL(S.sid, 'normal_gl.png', 2048), api.resultURL(S.sid, 'albedo_srgb.png', 2048),
-      api.resultURL(S.sid, 'alpha.png', 2048)).catch(err => logLine('[error] relight: ' + err.message));
+      api.resultURL(S.sid, 'alpha.png', 2048),
+      names.has('roughness.png') ? api.resultURL(S.sid, 'roughness.png', 2048) : null
+    ).catch(err => logLine('[error] relight: ' + err.message));
     S.relight = rl;
     $('#rl-el').addEventListener('input', e => rl.set('el', +e.target.value));
     $('#rl-amb').addEventListener('input', e => rl.set('ambient', +e.target.value / 100));
+    $('#rl-spec').addEventListener('input', e => rl.set('specular', +e.target.value / 100));
     segWire('#rl-conv', v => rl.set('dx', v === 'dx')); segWire('#rl-bg', v => rl.set('backdrop', +v));
   }
   document.querySelectorAll('.result-thumb').forEach(button => button.addEventListener('click', () => {

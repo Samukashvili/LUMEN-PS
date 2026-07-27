@@ -65,8 +65,16 @@ def test_pipeline_end_to_end(tmp_path):
     assert res["valid_px"] > 0.5 * mask.sum()
 
     # deliverables exist
-    for name in ("normal_gl.png", "normal_dx.png", "albedo.png", "height.png"):
+    for name in (
+        "normal_gl.png", "normal_dx.png", "albedo.png", "height.png",
+        "roughness.png", "roughness_consensus.png", "roughness_ggx.png",
+        "roughness_beckmann.png", "roughness_ward.png",
+    ):
         assert (res["out_dir"] / name).exists(), name
+    roughness = np.asarray(Image.open(res["out_dir"] / "roughness.png"), dtype=np.float32)
+    # This Lambertian-only fixture contains no defensible specular evidence, so
+    # roughness must stay at the configured baseline rather than being stretched.
+    assert np.allclose(roughness / 65535.0, cfg["roughness"]["baseline"], atol=2e-5)
     assert (res["out_dir"] / "qa" / "report.txt").exists()
     # thetas recovered near k*90
     for k, th in enumerate(res["thetas"]):

@@ -9,10 +9,13 @@ void main(){ vUv = p*0.5+0.5; gl_Position = vec4(p,0.,1.); }`;
 const FRAG = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 o;
-uniform sampler2D uN, uA, uAlpha;
+uniform sampler2D uN, uA, uR, uAlpha;
 uniform vec2 uFit;          // aspect 'contain' correction
 uniform vec3 uL;            // light dir (normalized)
-uniform float uAmbient, uDX, uBackdrop;
+uniform float uAmbient, uDX, uBackdrop, uHasRoughness, uSpecular;
+float ggxG1(float noX, float alpha2){
+  return 2.0*noX/(noX+sqrt(alpha2+(1.0-alpha2)*noX*noX));
+}
 void main(){
   vec2 uv = (vUv-0.5)*uFit + 0.5;
   if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0){ o=vec4(0.02,0.02,0.02,1.0); return; }
@@ -30,6 +33,22 @@ void main(){
   float a = texture(uAlpha, uv).r;
   float d = max(dot(n, uL), 0.0);
   vec3 lit = alb*(uAmbient + d);
+  if(uHasRoughness>0.5 && d>0.0){
+    vec3 v = vec3(0.0,0.0,1.0);
+    vec3 h = normalize(uL+v);
+    float noV = max(dot(n,v), 0.0001);
+    float noH = max(dot(n,h), 0.0001);
+    float voH = max(dot(v,h), 0.0);
+    float r = clamp(texture(uR,uv).r, 0.02, 1.0);
+    float alpha = max(r*r, 0.0004);
+    float alpha2 = alpha*alpha;
+    float q = noH*noH*(alpha2-1.0)+1.0;
+    float D = alpha2/(3.14159265*q*q);
+    float G = ggxG1(d,alpha2)*ggxG1(noV,alpha2);
+    float F = 0.04+(1.0-0.04)*pow(1.0-voH,5.0);
+    float spec = D*G*F/max(4.0*noV*d,0.0001);
+    lit += vec3(spec*d*uSpecular);
+  }
   o = vec4(mix(bg, lit, a), 1.0);
 }`;
 
@@ -43,7 +62,8 @@ export class Relight{
   constructor(canvas){
     this.canvas = canvas;
     this.imgAspect = 1;
-    this.state = { el: 35, ambient: 0.12, dx: false, backdrop: 1, lx: 0.0, ly: 0.6 };
+    this.state = { el: 35, ambient: 0.12, specular: 1.0, dx: false, backdrop: 1,
+      lx: 0.0, ly: 0.6, hasRoughness: false };
     this._dirty = true;
     this._tex = {};
     this._imgs = null;
@@ -85,14 +105,19 @@ export class Relight{
     const loc = gl.getAttribLocation(prog, 'p');
     gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     this.u = {};
-    ['uN','uA','uAlpha','uFit','uL','uAmbient','uDX','uBackdrop'].forEach(k =>
+    ['uN','uA','uR','uAlpha','uFit','uL','uAmbient','uDX','uBackdrop',
+      'uHasRoughness','uSpecular'].forEach(k =>
       this.u[k] = gl.getUniformLocation(prog, k));
     this._tex = {};
   }
 
-  async load(nURL, aURL, alphaURL){
-    const [n, a, al] = await Promise.all([this._img(nURL), this._img(aURL), this._img(alphaURL)]);
-    this._imgs = { uN: n, uA: a, uAlpha: al };
+  async load(nURL, aURL, alphaURL, roughnessURL = null){
+    const [n, a, al, r] = await Promise.all([
+      this._img(nURL), this._img(aURL), this._img(alphaURL),
+      roughnessURL ? this._img(roughnessURL) : Promise.resolve(null),
+    ]);
+    this._imgs = { uN: n, uA: a, uAlpha: al, uR: r };
+    this.state.hasRoughness = !!r;
     this.imgAspect = n.naturalWidth / n.naturalHeight;
     this._uploadTextures();
     this._dirty = true;
@@ -104,6 +129,7 @@ export class Relight{
     this._tex.uN = this._texture(this._imgs.uN, 0, 'uN');
     this._tex.uA = this._texture(this._imgs.uA, 1, 'uA');
     this._tex.uAlpha = this._texture(this._imgs.uAlpha, 2, 'uAlpha');
+    this._tex.uR = this._texture(this._imgs.uR || this._imgs.uAlpha, 3, 'uR');
   }
 
   _deleteTextures(){
@@ -161,6 +187,8 @@ export class Relight{
     gl.uniform2f(this.u.uFit, fit[0], fit[1]);
     gl.uniform3f(this.u.uL, s.lx*ch, s.ly*ch, Math.sin(el));
     gl.uniform1f(this.u.uAmbient, s.ambient);
+    gl.uniform1f(this.u.uSpecular, s.specular);
+    gl.uniform1f(this.u.uHasRoughness, s.hasRoughness?1:0);
     gl.uniform1f(this.u.uDX, s.dx?1:0);
     gl.uniform1f(this.u.uBackdrop, s.backdrop);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

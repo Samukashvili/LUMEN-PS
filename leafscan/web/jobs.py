@@ -240,6 +240,7 @@ def _run_pipeline_job(job: dict, sid: str):
             "az0": res["az0"], "el": res["el"], "thetas": res["thetas"],
             "valid_px": res["valid_px"],
             "residual_means": [round(s["mean"], 4) for s in res["residual"]],
+            "roughness": res.get("roughness", {}),
         }
         S.set_status(sid, "done", result=summary)
         job["result"] = summary

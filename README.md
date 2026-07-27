@@ -1,4 +1,4 @@
-LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures into normal, albedo, height, and alpha maps using photometric stereo.
+LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures into normal, albedo, roughness, height, and alpha maps using photometric stereo.
 
 <div align="center">
 
@@ -6,7 +6,7 @@ LUMEN-PS is texture-scanning software that turns four flatbed-scanner captures i
 
 ### Turn a flatbed scanner into a photometric-stereo material scanner.
 
-Recover **normal maps, albedo, height, and alpha** from four ordinary scans—no camera rig, synchronized lights, or special optics.
+Recover **normal maps, albedo, roughness, height, and alpha** from four ordinary scans—no camera rig, synchronized lights, or special optics.
 
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![Platform Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows)
@@ -91,7 +91,8 @@ This mask is shared by cropping, alignment, per-pixel validity, height integrati
 | **4 · Calibrate** | Fit lamp azimuth and elevation from a calibration card or from re-render error. | The light elevation controls how strongly recovered normals tilt. |
 | **5 · Solve** | Robustly solve `I = ρ(N · L)` per pixel, dropping highlight/shadow outliers. | Separates lighting-free albedo `ρ` from surface normal `N`. |
 | **6 · Repair** | Detect locally inconsistent normals, identify a bad scan by leave-one-out re-solving, and selectively inpaint only unrecoverable pixels. | Removes registration/gloss artifacts without smoothing away trustworthy vein relief. |
-| **7 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
+| **7 · Extract roughness** | Fit GGX, Beckmann, or Ward specular lobes and retarget the robust centre to a user-estimated baseline. | Preserves measured local variation without falsely stretching every result from black to white. |
+| **8 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
 
 ### What comes out
 
@@ -99,7 +100,7 @@ This mask is shared by cropping, alignment, per-pixel validity, height integrati
 |:--:|:--:|:--:|
 | ![Recovered Kiwi sRGB albedo](docs/assets/kiwi-albedo.webp) | ![Recovered Kiwi OpenGL normal map](docs/assets/kiwi-normal.webp) | ![Integrated Kiwi height field](docs/assets/kiwi-height.webp) |
 
-These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. QA additionally includes `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. By default, the delivered mask is a solid silhouette that preserves enclosed white details; it is also edge-trimmed and lightly regularized (`output.edge` in the config) so per-scan shadow jitter does not serrate the alpha cutout. Full outputs remain 16-bit where useful; README images are compressed display copies only.
+These previews and the relighting animation were regenerated from the filtered 1200 dpi `Kiwi Leaf` result in `sessions/kiwi-leaf-20260712-184906/out`. The height panel is contrast-mapped from its actual 16-bit `height.png`. LUMEN-PS exports `normal_gl.png`, `normal_dx.png`, linear and sRGB albedo, 16-bit `roughness.png`, `height.png`, `alpha.png`, and ready-to-use RGBA albedo/normal maps. Comparison mode makes `roughness.png` the robust three-model consensus and also writes `roughness_consensus.png`, `roughness_ggx.png`, `roughness_beckmann.png`, and `roughness_ward.png`. QA additionally includes raw pre-baseline roughness, per-method confidence, and `misreg_repair.png`, which records pixels re-solved from three observations and pixels that required inpainting. By default, the delivered mask is a solid silhouette that preserves enclosed white details; it is also edge-trimmed and lightly regularized (`output.edge` in the config) so per-scan shadow jitter does not serrate the alpha cutout. Full outputs remain 16-bit where useful; README images are compressed display copies only.
 
 ## Not just leaves: a rigid prototype PCB
 
@@ -119,7 +120,7 @@ Every drilled hole resolves as an individual dimple in the normal map, the silks
 
 <img src="docs/assets/pcb-relight.gif" width="520" alt="Recovered prototype PCB relit through a full 360 degree light orbit">
 
-*The recovered PCB relit through 360°, rendered with the interactive viewer's shading — `albedo × (ambient + max(N·L, 0))` — every hole and solder pad responding to the orbiting light.*
+*The recovered PCB relit through 360°. When a roughness map is present, the interactive viewer adds a GGX specular response using the same perceptual-roughness convention as the exported texture.*
 
 </div>
 
@@ -137,6 +138,37 @@ Two practical details make the result far better than a textbook least-squares s
 
 - **Registration is both rigid and non-rigid.** Thin subjects can settle differently after rotation; silhouette distance fields and vein/texture structure guide the correction.
 - **The solve is robust.** The brightest observation can be rejected to suppress specular glints, while pixels without at least three valid samples are excluded.
+
+## Roughness extraction and baseline calibration
+
+After the robust Lambertian solve establishes the normal field, the roughness pass deliberately returns to all unsaturated observations—including the highlights that were excluded from the normal solve. For each pixel and candidate perceptual roughness `r`, it fits
+
+```text
+Iₖ = d max(N · Lₖ, 0) + s fmodel(N, Lₖ, V, r)
+```
+
+with non-negative diffuse amplitude `d`, non-negative specular amplitude `s`, and the scanner's constant view vector `V = (0, 0, 1)`. Fresnel colour and scanner gain are absorbed by `s`, so candidate selection depends on the shape of the observed highlight lobe rather than an unavailable absolute reflectance calibration. The exported convention is the common PBR mapping `microfacet α = r²`.
+
+The recovered normal is part of every candidate evaluation through `N·L`, `N·V`, and `N·H`. This is what stops a raised or sloped vein from being mislabeled glossy merely because its orientation catches one scanner light. The integrated height map is not added as a second BRDF input: it is derived from those same normals, has no calibrated physical scale, and local opaque-surface specularity depends on orientation rather than absolute height. Feeding it back would double-count geometry. Instead, the normal field guides the spatial regularizer: smoothing follows similarly oriented tissue and stops across supported vein slopes, preserving vein-scale material evidence without inventing a roughness difference from geometry alone.
+
+Three estimators are available because four lighting observations cannot conclusively identify one universal material model:
+
+- **GGX / Trowbridge–Reitz** fits the long-tailed lobe used by most real-time PBR renderers.
+- **Beckmann** assumes Gaussian-distributed microfacet slopes and usually produces a tighter tail.
+- **Ward** fits the isotropic Ward reflectance profile as an independent comparison.
+
+In comparison mode the delivered `roughness.png` starts with the per-pixel median of all three baseline-retargeted models. One model-specific outlier therefore cannot turn a matte patch mirror-black or chalk-white. Cross-model disagreement then shrinks that pixel back toward the user's baseline; only structure supported by several reflectance models survives at full strength. The individual maps and `qa/roughness_model_agreement.png` remain available for evaluation. Because a physically plausible matte map is intentionally low-contrast, `qa/roughness_detail_preview.png` amplifies deviations around the baseline for inspection only; it is never used by the viewport or exported material.
+
+The four-view design leaves only one residual degree of freedom after fitting `d`, `s`, and `r`. Saturated, three-sample, flat-lobe, or diffuse-only pixels therefore receive low confidence and inherit a confidence-weighted local estimate. Roughness is estimated on a pooled half-resolution material grid by default, then smoothly returned to output resolution; this rejects scan grain and sub-pixel registration residuals that are useful in a normal map but look like static in a roughness map. The raw physical estimate and confidence remain in `qa/roughness_<method>_raw.png` and `qa/roughness_<method>_confidence.png`.
+
+Absolute calibration is supplied by the user's eye estimate. If `c` is the selected robust centre (median, mode, or mean), the delivered value is:
+
+```text
+rout = baseline + detail_strength × (rregularized − c)
+rout = clamp(rout, baseline − max_deviation, baseline + max_deviation)
+```
+
+There is **no min/max or percentile normalization** in this operation. A recovered span from `0.56` to `0.70` remains a `0.14`-wide span when `detail_strength` is `1.0`; changing the baseline only translates it. The default `detail_strength = 0.25` is a conservative shrinkage for the limited four-view evidence, while `1.0` retains the complete recovered deviation range. `max_deviation = 0.08` is an explicit material prior—not a remap—and prevents weak evidence from claiming implausible glossy/rough extremes. For a matte leaf, a baseline of `0.70` therefore keeps the default delivered range within `0.62–0.78`. Height is different: it has no absolute zero and is contrast-mapped for its image export, whereas roughness already has a physical PBR scale.
 
 ## Filtering bad normal pixels without erasing real detail
 
@@ -167,6 +199,7 @@ The 1200 dpi pipeline can operate on tens of millions of pixels, so LUMEN-PS use
 |:--|:--|:--|
 | Photometric normal solve | CPU | Four binary sample weights produce at most 16 distinct 3×3 systems. Each system is inverted once, then applied to all matching pixels—no per-pixel matrix factorization. |
 | RGB albedo recovery | NVIDIA CUDA | Processes VRAM-aware row tiles, avoiding a full four-view RGB stack allocation on the GPU. |
+| Roughness model fitting | CPU | Fits analytic non-negative diffuse/specular systems in bounded row tiles for each candidate lobe; comparison mode shares the same registered inputs. |
 | QA re-render + residuals | NVIDIA CUDA | Computes predicted lighting and absolute residuals in bounded tiles. |
 | Height integration | NVIDIA CUDA | Runs the Frankot–Chellappa FFT in float32 on the GPU. The CPU fallback also uses float32 to halve its previous peak memory. |
 | Alignment and optical flow | CPU/OpenCV | Remains CPU-side to preserve the established interpolation and registration behavior; OpenCV is capped at four threads by default so the desktop stays responsive. |
@@ -200,7 +233,7 @@ For the PCB example above this meant ~20 MB per capture, the scan head stopping 
 - **The four lights lie on one cone.** Rotation changes azimuth, not elevation. A wrong elevation can still produce plausible-looking normals with systematically exaggerated or flattened relief, so LUMEN-PS fits elevation instead of guessing it.
 - **The scanner is repeatable in ways a hand-held camera is not.** Focus, sensor path, working distance, and lamp-to-sensor geometry are mechanically fixed on every pass.
 - **Color contains an extra botanical clue.** For leaves, red light penetrates tissue more deeply than blue. LUMEN-PS writes an `R − B` subsurface hint for QA or shading experiments, but deliberately does not let it drive the normal solve. This leaf-specific bonus is optional; the core reconstruction works on other diffuse subjects.
-- **Normals and height answer different questions.** The normal map is the direct photometric result and preserves fine local slope. Height is obtained by integrating that slope field, so it is useful for relief but more sensitive to low-frequency drift and boundary conditions.
+- **Normals, roughness, and height answer different questions.** The normal map is the direct photometric slope result. Roughness describes the fitted width of specular response and needs a user baseline because four cone lights do not provide absolute material calibration. Height is obtained by integrating the normal field, so it is useful for relief but more sensitive to low-frequency drift and boundary conditions.
 - **Sixteen-bit normals matter here.** The lamp–sensor baseline is small, so many recovered slopes differ by fine increments that would band more readily in an 8-bit deliverable.
 
 ### The reconstruction checks its own work
@@ -291,7 +324,7 @@ python -m pytest tests -q
 python -m leafscan.cli selftest
 ```
 
-The implementation is organized into `io`, `lights`, `align`, `calibrate`, `solve`, `cleanup`, `compute`, `integrate`, `outputs`, and `qa`, with the WIA capture bridge and FastAPI/WebGL UI alongside them. Tunable values live in [`leafscan/config.yaml`](leafscan/config.yaml). The detailed derivation and design rationale live in [`scanner_photometric_stereo_spec.md`](scanner_photometric_stereo_spec.md).
+The implementation is organized into `io`, `lights`, `align`, `calibrate`, `solve`, `cleanup`, `roughness`, `compute`, `integrate`, `outputs`, and `qa`, with the WIA capture bridge and FastAPI/WebGL UI alongside them. Tunable values live in [`leafscan/config.yaml`](leafscan/config.yaml). The detailed derivation and design rationale live in [`scanner_photometric_stereo_spec.md`](scanner_photometric_stereo_spec.md).
 
 ## License
 

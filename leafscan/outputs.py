@@ -43,7 +43,8 @@ def save_png(path, img01, bits=8):
 
 
 def write_outputs(out_dir, normal, albedo_rgb, valid, height=None, alpha=None,
-                  normal_bits=16, albedo_linear=True, albedo_srgb=True):
+                  normal_bits=16, albedo_linear=True, albedo_srgb=True,
+                  roughness=None, roughness_bits=16):
     """Write the full deliverable set (spec §1, §9.3). Returns list of paths.
 
     ``alpha`` (H,W) in [0,1] is the leaf opacity/silhouette. When provided it is
@@ -87,4 +88,13 @@ def write_outputs(out_dir, normal, albedo_rgb, valid, height=None, alpha=None,
             lo, hi = h.min(), h.max()
         hn = np.clip((h - lo) / (hi - lo + 1e-8), 0, 1)
         written.append(save_png(out / "height.png", hn * valid, 16))
+
+    # Roughness is already in physical [0,1] PBR units. In particular, do not
+    # apply the percentile/min-max contrast mapping used for derived height.
+    for name, roughness_map in (roughness or {}).items():
+        filename = name if str(name).endswith(".png") else f"{name}.png"
+        written.append(save_png(
+            out / filename, np.asarray(roughness_map, dtype=np.float32),
+            roughness_bits,
+        ))
     return written
