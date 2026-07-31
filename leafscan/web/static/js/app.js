@@ -1,14 +1,12 @@
 // LUMEN-PS front controller: capture, persistent processing, and result inspection.
 import { api, streamJob } from './api.js';
 import { Relight } from './relight.js';
+import { advanceProgress, progressFromLines } from './progress.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-roughness-v1';
+const EXPECTED_BACKEND = '2026.07-multi-object-v3';
 const STAGES = ['capture', 'process', 'results'];
-const STAGE_MAP = { '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
-  '[valid]': 1, '[calib]': 2, '[solve]': 3, '[roughness]': 4, '[integrate]': 5,
-  '[out]': 6, '[qa]': 6, '[done]': 7 };
 const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Roughness', 'Integrate', 'Output'];
 
 const RESULT_META = {
@@ -31,14 +29,16 @@ const RESULT_META = {
   'qa/rejection_coverage.png': ['Rejection coverage', 'Diagnostics'],
   'qa/roughness_detail_preview.png': ['Roughness detail preview', 'Diagnostics'],
   'qa/roughness_model_agreement.png': ['Roughness model agreement', 'Diagnostics'],
+  'qa/object_detection.png': ['Detected objects', 'Diagnostics'],
 };
 
 const S = {
   device: null, backendCurrent: true, sid: null, meta: null, cfg: null, overrides: {},
   stage: 'capture', relight: null, closeWS: null, log: [],
   jobKind: null, jobStatus: 'idle', jobCursor: 0, jobResult: null,
-  processStage: 0, resultMode: 'relight', selectedResult: null,
-  removeImportRole: null,
+  processStage: 0, processMulti: false, processObject: 0, processObjectCount: 0,
+  resultMode: 'relight', selectedResult: null,
+  removeImportRole: null, deviceBusy: false,
 };
 
 // ---- helpers --------------------------------------------------------------
@@ -111,14 +111,36 @@ async function boot() {
   $('#back-to-sessions').addEventListener('click', returnToRecent);
   document.querySelectorAll('.stage').forEach(b =>
     b.addEventListener('click', () => gotoStage(b.dataset.stage)));
-  try {
-    const [device, backend] = await Promise.all([api.device(), api.version()]);
-    S.device = device; S.backendCurrent = backend.version === EXPECTED_BACKEND;
-  } catch {
-    S.device = { connected: false, note: 'Restart LUMEN-PS to load the updated scan engine.' };
-    S.backendCurrent = false;
-  }
+  const [deviceResult, backendResult] = await Promise.allSettled([api.device(), api.version()]);
+  S.device = deviceResult.status === 'fulfilled' ? deviceResult.value
+    : { connected: false, note: 'Scanner status could not be read. It will retry after capture.' };
+  S.backendCurrent = backendResult.status === 'fulfilled'
+    && backendResult.value.version === EXPECTED_BACKEND;
   paintDevice(); await paintRecent();
+}
+
+function confirmScannerFromCapture(depth = null) {
+  const fallbackDepth = S.cfg?.capture?.color === false ? 8 : 24;
+  S.device = {
+    name: 'Flatbed scanner', dpi_options: [300, 600, 1200], depth_options: [],
+    color: true, note: null, ...(S.device || {}), connected: true,
+    max_bit_depth: Number(depth) || S.device?.max_bit_depth || fallbackDepth,
+  };
+  paintDevice();
+  if (S.meta) paintTelemetry();
+}
+
+async function refreshDeviceStatus(preserveConfirmed = false) {
+  try {
+    const latest = await api.device();
+    // WIA can remain locked briefly after a transfer. Do not replace a status
+    // proven by the completed capture with that transient false negative.
+    if (latest.connected || !preserveConfirmed || !S.device?.connected) S.device = latest;
+    paintDevice();
+    if (S.meta) paintTelemetry();
+  } catch (_) {
+    // Capture remains usable and its last confirmed telemetry stays visible.
+  }
 }
 
 function paintDevice() {
@@ -209,7 +231,8 @@ async function newSession(e) {
 async function enterSession(sid) {
   if (S.closeWS) { S.closeWS(); S.closeWS = null; }
   Object.assign(S, { sid, log: [], jobKind: null, jobStatus: 'idle', jobCursor: 0,
-    jobResult: null, processStage: 0, selectedResult: null, resultMode: 'relight' });
+    jobResult: null, processStage: 0, processMulti: false, processObject: 0,
+    processObjectCount: 0, selectedResult: null, resultMode: 'relight' });
   $('#log-console').innerHTML = '';
   await refreshMeta();
   const bundle = await api.getConfig(sid);
@@ -373,9 +396,14 @@ async function doCapture(role) {
   disableActions(true); openLog(); logLine(`[scan] requesting ${role}...`);
   try {
     const started = await api.capture(S.sid, role);
-    Object.assign(S, { jobKind: started.kind, jobStatus: started.status, jobCursor: 0 });
+    Object.assign(S, { jobKind: started.kind, jobStatus: started.status, jobCursor: 0,
+      deviceBusy: true });
+    paintTelemetry();
     watchCurrentJob(0);
-  } catch (err) { logLine('[error] ' + err.message); disableActions(false); }
+  } catch (err) {
+    S.deviceBusy = false; paintTelemetry();
+    logLine('[error] ' + err.message); disableActions(false);
+  }
 }
 
 async function resetAllScans() {
@@ -385,7 +413,8 @@ async function resetAllScans() {
     await api.resetScans(S.sid);
     closeResetScans();
     await refreshMeta();
-    S.jobKind = null; S.jobStatus = 'idle'; S.processStage = 0; S.jobResult = null;
+    S.jobKind = null; S.jobStatus = 'idle'; S.processStage = 0; S.processMulti = false;
+    S.processObject = 0; S.processObjectCount = 0; S.jobResult = null;
     logLine('[scan] all captures reset; ready for k0.');
     renderCapture();
   } catch (err) {
@@ -409,12 +438,16 @@ function renderProcess() {
         <small id="process-state-note">${busy ? 'Safe to leave this page.' : done ? 'You can re-run with new settings.' : 'Four source scans detected.'}</small></div></div></div>
     <div class="process-layout">
       <section class="settings-stack" id="process-settings">
-        <div class="settings-section"><div class="settings-title"><span>01</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
+        <div class="settings-section"><div class="settings-title"><span>01</span><div><b>Object set</b><small>Choose one specimen or an independently aligned atlas.</small></div></div>
+          ${toggleControl('multi_object.enabled', 'Multiple separate objects', 'Detect, track, and align every separated object independently across all four scans.')}
+          ${selectControl('multi_object.atlas_size', 'Square atlas size', 'Resolution used by every exported map and the result viewport.', [
+            [2048, '2048 × 2048'], [4096, '4096 × 4096'], [8192, '8192 × 8192']])}</div>
+        <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
           ${selectControl('solve.rejection', 'Outlier rejection', 'Remove glare and shadow samples per pixel.', [
             ['none', 'None'], ['drop_brightest', 'Drop brightest'], ['drop_brightest_and_darkest', 'Drop brightest + darkest']])}
           ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}
           ${toggleControl('align.mask.detect_interior_holes', 'Detect holes in subject', 'Optional for perforated subjects. Warning: this can rotoscope white parts of the object.')}</div>
-        <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Output maps</b><small>Edges, relief, and transparency.</small></div></div>
+        <div class="settings-section"><div class="settings-title"><span>03</span><div><b>Output maps</b><small>Edges, relief, and transparency.</small></div></div>
           ${toggleControl('roughness.enabled', 'Roughness map', 'Fit specular response without stretching the result to a 0–1 range.')}
           ${selectControl('roughness.method', 'Roughness method', 'Compare all models or choose the primary estimator.', [
             ['compare', 'Compare all (consensus primary)'], ['ggx', 'GGX / Trowbridge–Reitz'],
@@ -429,7 +462,7 @@ function renderProcess() {
           ${numberControl('output.alpha.feather_px', 'Alpha feather', 'Softness at the silhouette edge, in pixels.', 0.5, 0)}
           ${numberControl('output.edge.trim_px', 'Edge trim', 'Remove mixed leaf/background boundary pixels.', 1, 0)}
           ${numberControl('output.edge.pad_px', 'Texture padding', 'Bleed outside the silhouette for mipmaps.', 1, 0)}</div>
-        <div class="settings-section"><div class="settings-title"><span>03</span><div><b>Performance</b><small>Memory and preview-quality controls.</small></div></div>
+        <div class="settings-section"><div class="settings-title"><span>04</span><div><b>Performance</b><small>Memory and preview-quality controls.</small></div></div>
           ${toggleControl('runtime.auto_crop', 'Auto-crop in memory', 'Crop full-bed legacy scans before solving.')}
           ${numberControl('runtime.scale', 'Working scale', '1.0 is full resolution; lower values are faster.', 0.05, 0.05)}</div>
         <details class="expander"><summary>Advanced raw overrides</summary><textarea id="ov-json">${esc(JSON.stringify(S.overrides, null, 2))}</textarea>
@@ -440,7 +473,8 @@ function renderProcess() {
           <div class="save-folder-row"><input id="output-dir" type="text" value="${escAttr(S.meta.output_dir || '')}" placeholder="Default: this session's workspace">
           <button class="btn btn--sm" id="choose-output-dir" type="button">Choose folder…</button></div>
           <small>Enter an absolute folder path. Leave empty to keep results with the session.</small></div>
-        <div class="prog"><div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
+        <div class="prog"><div class="prog-context" id="progress-context">${progressContextText()}</div>
+          <div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
           <div class="prog-stages" id="pstages">${PSTAGES.map(s => `<span class="pstage">${s}</span>`).join('')}</div></div>
         <div id="run-summary"></div>
       </section>
@@ -459,7 +493,7 @@ function renderProcess() {
     try { S.overrides = JSON.parse($('#ov-json').value || '{}'); await saveConfig(); status.textContent = 'JSON applied'; renderProcess(); }
     catch (err) { status.textContent = 'Invalid JSON: ' + err.message; }
   });
-  setStageProgress(S.processStage);
+  setStageProgress(S.processStage, true);
   if (done && S.meta.result) showSummary(S.meta.result, true);
   if (busy) disableProcessControls(true);
   restoreJobState();
@@ -490,8 +524,10 @@ async function doRun() {
   disableProcessControls(true); openLog();
   try {
     await persistProcessSettings();
-    Object.assign(S, { processStage: 0, jobKind: 'run', jobStatus: 'queued', jobCursor: 0, jobResult: null });
-    setStageProgress(0); $('#run-summary').innerHTML = '';
+    Object.assign(S, { processStage: 0, processMulti: !!S.cfg.multi_object?.enabled,
+      processObject: 0, processObjectCount: 0, jobKind: 'run', jobStatus: 'queued',
+      jobCursor: 0, jobResult: null });
+    setStageProgress(0, true); $('#run-summary').innerHTML = '';
     logLine('[run] starting reconstruction...');
     await api.run(S.sid); watchCurrentJob(0); renderProcess();
   } catch (err) { logLine('[error] ' + err.message); disableProcessControls(false); }
@@ -501,11 +537,15 @@ async function restoreJobState() {
     const job = await api.job(S.sid);
     if (job.kind !== 'run') return;
     S.jobKind = job.kind; S.jobStatus = job.status; S.jobResult = job.result;
-    S.processStage = stageFromLines(job.log || []);
+    const progress = progressFromLines(job.log || []);
+    Object.assign(S, { processStage: job.status === 'done' ? PSTAGES.length : progress.stage,
+      processMulti: progress.multi || !!S.cfg?.multi_object?.enabled,
+      processObject: progress.object, processObjectCount: progress.count });
     if (S.jobCursor === 0 && job.log?.length) {
       job.log.forEach(logLine); S.jobCursor = job.log.length;
     }
-    setStageProgress(S.processStage);
+    if (job.status === 'done') S.processStage = PSTAGES.length;
+    setStageProgress(S.processStage, true);
     if (['queued', 'running'].includes(job.status)) {
       disableProcessControls(true); if (!S.closeWS) watchCurrentJob(S.jobCursor);
     } else if (job.status === 'done' && job.result) showSummary(job.result, true);
@@ -514,7 +554,8 @@ async function restoreJobState() {
 }
 function showSummary(r, withAction = false) {
   const box = $('#run-summary'); if (!box || !r) return;
-  box.innerHTML = `<div class="summary-grid"><div class="stat"><div class="n">${r.az0.toFixed(0)}&deg;</div><div class="l">azimuth</div></div>
+  box.innerHTML = `${r.object_count ? `<div class="mono muted">${r.object_count} independently aligned objects · ${r.atlas_size} × ${r.atlas_size} atlas</div>` : ''}
+    <div class="summary-grid"><div class="stat"><div class="n">${r.az0.toFixed(0)}&deg;</div><div class="l">azimuth</div></div>
     <div class="stat"><div class="n">${r.el.toFixed(0)}&deg;</div><div class="l">elevation</div></div>
     <div class="stat"><div class="n">${Math.max(...r.residual_means).toFixed(3)}</div><div class="l">max residual</div></div>
     <div class="stat"><div class="n">${(r.valid_px / 1e6).toFixed(1)}M</div><div class="l">solved px</div></div></div>
@@ -524,17 +565,28 @@ function showSummary(r, withAction = false) {
 function showRunError(error) {
   const box = $('#run-summary'); if (box) box.innerHTML = `<div class="err-box">Reconstruction failed.\n${esc(error || '')}</div>`;
 }
-function stageFromLines(lines) {
-  let stage = 0;
-  lines.forEach(line => { for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.startsWith(prefix)) stage = Math.max(stage, index); });
-  return stage;
+function progressContextText() {
+  if (!S.processMulti) return 'Single-object reconstruction';
+  if (!S.processObjectCount) return 'Detecting and matching objects';
+  return `Object ${S.processObject} of ${S.processObjectCount}`;
 }
-function setStageProgress(index) {
-  S.processStage = Math.max(S.processStage, index);
+function setStageProgress(index, exact = false) {
+  S.processStage = exact ? index : Math.max(S.processStage, index);
   const chips = document.querySelectorAll('.pstage');
   chips.forEach((chip, i) => { chip.classList.toggle('done', i < S.processStage || S.processStage >= PSTAGES.length);
     chip.classList.toggle('on', i === S.processStage && S.processStage < PSTAGES.length); });
-  const fill = $('#pfill'); if (fill) fill.style.width = `${Math.min(100, S.processStage / PSTAGES.length * 100)}%`;
+  let completion = S.processStage / PSTAGES.length;
+  if (S.processMulti && S.processObjectCount) {
+    completion = ((S.processObject - 1) + completion) / S.processObjectCount;
+  }
+  const fill = $('#pfill'); if (fill) fill.style.width = `${Math.min(100, completion * 100)}%`;
+  const context = $('#progress-context'); if (context) context.textContent = progressContextText();
+  const note = $('#process-state-note');
+  if (note && S.jobKind === 'run' && ['queued', 'running'].includes(S.jobStatus)) {
+    note.textContent = S.processMulti
+      ? `${progressContextText()} · ${PSTAGES[Math.min(S.processStage, PSTAGES.length - 1)]}`
+      : 'Safe to leave this page.';
+  }
 }
 
 // ---- Results --------------------------------------------------------------
@@ -638,6 +690,13 @@ function watchCurrentJob(from = 0) {
   }, async status => {
     if (S.closeWS) S.closeWS(); S.closeWS = null;
     S.jobStatus = status.status; S.jobKind = status.kind; S.jobResult = status.result;
+    if (status.kind?.startsWith('capture:')) {
+      S.deviceBusy = false;
+      if (status.status === 'done') {
+        confirmScannerFromCapture(status.result?.info?.depth);
+        setTimeout(() => refreshDeviceStatus(true), 750);
+      }
+    }
     await refreshMeta();
     if (status.kind === 'run') {
       if (status.status === 'done') S.processStage = PSTAGES.length;
@@ -652,12 +711,23 @@ async function cancelCurrentJob() {
 }
 function logLine(line) {
   S.log.push(line);
+  // A completed locator transfer or an active detail pass is stronger evidence
+  // than the one-shot WIA enumeration performed while the app was starting.
+  if (/^\[scan\].*(content ROI|detail pass|depth=|saved\.)/i.test(line)) {
+    S.deviceBusy = !/saved\.$/i.test(line);
+    confirmScannerFromCapture();
+  }
+  const update = advanceProgress({ stage: S.processStage, multi: S.processMulti,
+    object: S.processObject, count: S.processObjectCount }, line);
+  S.processMulti = update.progress.multi;
+  S.processObject = update.progress.object;
+  S.processObjectCount = update.progress.count;
+  if (update.stageTouched) setStageProgress(update.progress.stage, update.stageExact);
   const console = $('#log-console');
   const cls = /\[error|fail/i.test(line) ? 'err' : /\[done|ok|saved/i.test(line) ? 'ok'
     : /\[calib|\[solve|residual/i.test(line) ? 'warn' : '';
   console.insertAdjacentHTML('beforeend', `<span class="${cls}">${esc(line)}</span>\n`);
   console.scrollTop = console.scrollHeight;
-  for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.startsWith(prefix)) setStageProgress(index);
 }
 function toggleLog() {
   const console = $('#log-console'), toggle = $('#log-toggle');
@@ -670,6 +740,9 @@ function disableActions(on) { document.querySelectorAll('#stage-main .btn').forE
 function paintTelemetry() {
   const m = S.meta, d = S.device, r = m?.result;
   const dots = LEAF.map(k => `<div class="dot ${m?.scans[k] ? 'done' : ''}">${k[1]}</div>`).join('');
+  const scannerState = S.deviceBusy ? (d?.connected ? 'online / scanning' : 'connecting')
+    : d?.connected ? 'online' : 'offline';
+  const depth = d?.max_bit_depth || '-';
   let light = '';
   if (r) {
     const vectors = lightVectors(r.az0, r.el, r.thetas);
@@ -679,8 +752,8 @@ function paintTelemetry() {
       <div class="tel-row"><span class="tel-k">residual</span><span class="v settle">${r.residual_means.map(x => x.toFixed(3)).join(' ')}</span></div></div>`;
   }
   $('#tel-body').innerHTML = `<div class="tel-group"><div class="tel-k">Bench</div>
-    <div class="tel-row"><span>scanner</span><span class="v">${d?.connected ? 'online' : 'offline'}</span></div>
-    <div class="tel-row"><span>max depth</span><span class="v">${d?.max_bit_depth || '-'}-bit</span></div></div>
+    <div class="tel-row"><span>scanner</span><span class="v">${scannerState}</span></div>
+    <div class="tel-row"><span>max depth</span><span class="v">${depth}-bit</span></div></div>
     <div class="tel-group"><div class="tel-k">Session</div><div class="tel-row"><span>name</span><span class="v">${esc(m?.name || '-')}</span></div>
     <div class="tel-row"><span>status</span><span class="v">${m?.status || '-'}</span></div>
     <div class="tel-row"><span>scans</span><span class="dots">${dots}</span></div></div>${light}`;

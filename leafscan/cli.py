@@ -92,6 +92,26 @@ def _fill_invalid(arr, valid, region):
 def run_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
                  scale=None, verbose=True, log_fn=None, auto_crop=False,
                  cancel_check=None, capture_rois=None, capture_dpi=None):
+    """Dispatch to the single-subject or independently tracked atlas pipeline."""
+    if cfg.get("multi_object", {}).get("enabled", False):
+        from .multi_object import run_multi_object_pipeline
+        return run_multi_object_pipeline(
+            cfg, scan_paths, out_dir, flat_path=flat_path,
+            calib_paths=calib_paths, scale=scale, verbose=verbose,
+            log_fn=log_fn, auto_crop=auto_crop, cancel_check=cancel_check,
+            capture_rois=capture_rois, capture_dpi=capture_dpi,
+        )
+    return _run_single_pipeline(
+        cfg, scan_paths, out_dir, flat_path=flat_path,
+        calib_paths=calib_paths, scale=scale, verbose=verbose,
+        log_fn=log_fn, auto_crop=auto_crop, cancel_check=cancel_check,
+        capture_rois=capture_rois, capture_dpi=capture_dpi,
+    )
+
+
+def _run_single_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=None,
+                         scale=None, verbose=True, log_fn=None, auto_crop=False,
+                         cancel_check=None, capture_rois=None, capture_dpi=None):
     """Run the full pipeline.
 
     ``log_fn`` — optional callback(str) for streaming progress (the web UI passes

@@ -231,6 +231,31 @@ Scanning the full bed four times at 1200 dpi is slow and produces four ~350-mega
 
 For the PCB example above this meant ~20 MB per capture, the scan head stopping right after the board on every pass, and a working canvas barely larger than the board itself instead of four padded full-bed frames.
 
+## Multi-object scanning and texture atlases
+
+Small specimens no longer need separate four-scan sessions. Place several
+objects on the platen with clear background between them, capture the usual
+four rotations, then enable **Multiple separate objects** on the Process
+screen. LUMEN-PS detects every connected specimen, associates its identity
+across the rotations using rotation-invariant shape and colour evidence, and
+runs rigid, feature, and non-rigid registration independently for each object.
+If an object is missing or cannot be paired confidently, processing stops with
+the affected scan and object number instead of silently mixing two specimens.
+
+Every reconstructed material map is then packed with the same layout into a
+square 2K, 4K, or 8K atlas. `normal_gl.png`, `normal_dx.png`, albedo, height,
+roughness, alpha, and RGBA convenience maps therefore share exact UV
+placements. The interactive relighting viewport reads those atlas files
+directly, so its object positions and boundaries match the exported textures.
+`qa/object_detection.png` records scan 0's numbered component boxes, while
+`multi_object_manifest.json` records match costs, native crop rectangles, and
+atlas placements.
+
+For reliable separation, leave visible platen background between objects and
+keep every object present in all four captures. The first capture defines
+atlas order and final orientation; the objects may move and may be a few
+degrees off while being rotated.
+
 ### Details hidden inside the simple idea
 
 - **Four scans are deliberate.** Two intensity measurements cannot determine a three-component scaled normal. Three is the mathematical minimum; the fourth gives the solver room to reject one highlight or shadow and still remain determined.
