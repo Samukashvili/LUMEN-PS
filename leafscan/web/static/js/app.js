@@ -1,14 +1,12 @@
 // LUMEN-PS front controller: capture, persistent processing, and result inspection.
 import { api, streamJob } from './api.js';
 import { Relight } from './relight.js';
+import { advanceProgress, progressFromLines } from './progress.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-multi-object-v2';
+const EXPECTED_BACKEND = '2026.07-multi-object-v3';
 const STAGES = ['capture', 'process', 'results'];
-const STAGE_MAP = { '[objects]': 0, '[crop]': 0, '[load]': 0, '[rigid]': 1, '[nonrigid]': 1,
-  '[valid]': 1, '[calib]': 2, '[solve]': 3, '[roughness]': 4, '[integrate]': 5,
-  '[out]': 6, '[qa]': 6, '[atlas]': 6, '[done]': 7 };
 const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Roughness', 'Integrate', 'Output'];
 
 const RESULT_META = {
@@ -38,7 +36,8 @@ const S = {
   device: null, backendCurrent: true, sid: null, meta: null, cfg: null, overrides: {},
   stage: 'capture', relight: null, closeWS: null, log: [],
   jobKind: null, jobStatus: 'idle', jobCursor: 0, jobResult: null,
-  processStage: 0, resultMode: 'relight', selectedResult: null,
+  processStage: 0, processMulti: false, processObject: 0, processObjectCount: 0,
+  resultMode: 'relight', selectedResult: null,
   removeImportRole: null, deviceBusy: false,
 };
 
@@ -232,7 +231,8 @@ async function newSession(e) {
 async function enterSession(sid) {
   if (S.closeWS) { S.closeWS(); S.closeWS = null; }
   Object.assign(S, { sid, log: [], jobKind: null, jobStatus: 'idle', jobCursor: 0,
-    jobResult: null, processStage: 0, selectedResult: null, resultMode: 'relight' });
+    jobResult: null, processStage: 0, processMulti: false, processObject: 0,
+    processObjectCount: 0, selectedResult: null, resultMode: 'relight' });
   $('#log-console').innerHTML = '';
   await refreshMeta();
   const bundle = await api.getConfig(sid);
@@ -413,7 +413,8 @@ async function resetAllScans() {
     await api.resetScans(S.sid);
     closeResetScans();
     await refreshMeta();
-    S.jobKind = null; S.jobStatus = 'idle'; S.processStage = 0; S.jobResult = null;
+    S.jobKind = null; S.jobStatus = 'idle'; S.processStage = 0; S.processMulti = false;
+    S.processObject = 0; S.processObjectCount = 0; S.jobResult = null;
     logLine('[scan] all captures reset; ready for k0.');
     renderCapture();
   } catch (err) {
@@ -472,7 +473,8 @@ function renderProcess() {
           <div class="save-folder-row"><input id="output-dir" type="text" value="${escAttr(S.meta.output_dir || '')}" placeholder="Default: this session's workspace">
           <button class="btn btn--sm" id="choose-output-dir" type="button">Choose folder…</button></div>
           <small>Enter an absolute folder path. Leave empty to keep results with the session.</small></div>
-        <div class="prog"><div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
+        <div class="prog"><div class="prog-context" id="progress-context">${progressContextText()}</div>
+          <div class="prog-bar"><div class="prog-fill" id="pfill"></div></div>
           <div class="prog-stages" id="pstages">${PSTAGES.map(s => `<span class="pstage">${s}</span>`).join('')}</div></div>
         <div id="run-summary"></div>
       </section>
@@ -491,7 +493,7 @@ function renderProcess() {
     try { S.overrides = JSON.parse($('#ov-json').value || '{}'); await saveConfig(); status.textContent = 'JSON applied'; renderProcess(); }
     catch (err) { status.textContent = 'Invalid JSON: ' + err.message; }
   });
-  setStageProgress(S.processStage);
+  setStageProgress(S.processStage, true);
   if (done && S.meta.result) showSummary(S.meta.result, true);
   if (busy) disableProcessControls(true);
   restoreJobState();
@@ -522,8 +524,10 @@ async function doRun() {
   disableProcessControls(true); openLog();
   try {
     await persistProcessSettings();
-    Object.assign(S, { processStage: 0, jobKind: 'run', jobStatus: 'queued', jobCursor: 0, jobResult: null });
-    setStageProgress(0); $('#run-summary').innerHTML = '';
+    Object.assign(S, { processStage: 0, processMulti: !!S.cfg.multi_object?.enabled,
+      processObject: 0, processObjectCount: 0, jobKind: 'run', jobStatus: 'queued',
+      jobCursor: 0, jobResult: null });
+    setStageProgress(0, true); $('#run-summary').innerHTML = '';
     logLine('[run] starting reconstruction...');
     await api.run(S.sid); watchCurrentJob(0); renderProcess();
   } catch (err) { logLine('[error] ' + err.message); disableProcessControls(false); }
@@ -533,11 +537,15 @@ async function restoreJobState() {
     const job = await api.job(S.sid);
     if (job.kind !== 'run') return;
     S.jobKind = job.kind; S.jobStatus = job.status; S.jobResult = job.result;
-    S.processStage = stageFromLines(job.log || []);
+    const progress = progressFromLines(job.log || []);
+    Object.assign(S, { processStage: job.status === 'done' ? PSTAGES.length : progress.stage,
+      processMulti: progress.multi || !!S.cfg?.multi_object?.enabled,
+      processObject: progress.object, processObjectCount: progress.count });
     if (S.jobCursor === 0 && job.log?.length) {
       job.log.forEach(logLine); S.jobCursor = job.log.length;
     }
-    setStageProgress(S.processStage);
+    if (job.status === 'done') S.processStage = PSTAGES.length;
+    setStageProgress(S.processStage, true);
     if (['queued', 'running'].includes(job.status)) {
       disableProcessControls(true); if (!S.closeWS) watchCurrentJob(S.jobCursor);
     } else if (job.status === 'done' && job.result) showSummary(job.result, true);
@@ -557,17 +565,28 @@ function showSummary(r, withAction = false) {
 function showRunError(error) {
   const box = $('#run-summary'); if (box) box.innerHTML = `<div class="err-box">Reconstruction failed.\n${esc(error || '')}</div>`;
 }
-function stageFromLines(lines) {
-  let stage = 0;
-  lines.forEach(line => { for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.includes(prefix)) stage = Math.max(stage, index); });
-  return stage;
+function progressContextText() {
+  if (!S.processMulti) return 'Single-object reconstruction';
+  if (!S.processObjectCount) return 'Detecting and matching objects';
+  return `Object ${S.processObject} of ${S.processObjectCount}`;
 }
-function setStageProgress(index) {
-  S.processStage = Math.max(S.processStage, index);
+function setStageProgress(index, exact = false) {
+  S.processStage = exact ? index : Math.max(S.processStage, index);
   const chips = document.querySelectorAll('.pstage');
   chips.forEach((chip, i) => { chip.classList.toggle('done', i < S.processStage || S.processStage >= PSTAGES.length);
     chip.classList.toggle('on', i === S.processStage && S.processStage < PSTAGES.length); });
-  const fill = $('#pfill'); if (fill) fill.style.width = `${Math.min(100, S.processStage / PSTAGES.length * 100)}%`;
+  let completion = S.processStage / PSTAGES.length;
+  if (S.processMulti && S.processObjectCount) {
+    completion = ((S.processObject - 1) + completion) / S.processObjectCount;
+  }
+  const fill = $('#pfill'); if (fill) fill.style.width = `${Math.min(100, completion * 100)}%`;
+  const context = $('#progress-context'); if (context) context.textContent = progressContextText();
+  const note = $('#process-state-note');
+  if (note && S.jobKind === 'run' && ['queued', 'running'].includes(S.jobStatus)) {
+    note.textContent = S.processMulti
+      ? `${progressContextText()} · ${PSTAGES[Math.min(S.processStage, PSTAGES.length - 1)]}`
+      : 'Safe to leave this page.';
+  }
 }
 
 // ---- Results --------------------------------------------------------------
@@ -698,12 +717,17 @@ function logLine(line) {
     S.deviceBusy = !/saved\.$/i.test(line);
     confirmScannerFromCapture();
   }
+  const update = advanceProgress({ stage: S.processStage, multi: S.processMulti,
+    object: S.processObject, count: S.processObjectCount }, line);
+  S.processMulti = update.progress.multi;
+  S.processObject = update.progress.object;
+  S.processObjectCount = update.progress.count;
+  if (update.stageTouched) setStageProgress(update.progress.stage, update.stageExact);
   const console = $('#log-console');
   const cls = /\[error|fail/i.test(line) ? 'err' : /\[done|ok|saved/i.test(line) ? 'ok'
     : /\[calib|\[solve|residual/i.test(line) ? 'warn' : '';
   console.insertAdjacentHTML('beforeend', `<span class="${cls}">${esc(line)}</span>\n`);
   console.scrollTop = console.scrollHeight;
-  for (const [prefix, index] of Object.entries(STAGE_MAP)) if (line.includes(prefix)) setStageProgress(index);
 }
 function toggleLog() {
   const console = $('#log-console'), toggle = $('#log-toggle');

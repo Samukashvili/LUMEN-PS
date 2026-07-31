@@ -297,6 +297,8 @@ textarea{width:100%; min-height:280px; resize:vertical; line-height:1.55}
 
 /* ---- process ------------------------------------------------------------- */
 .prog{border:1px solid var(--line); border-radius:6px; background:var(--panel); overflow:hidden}
+.prog-context{padding:10px 14px;border-bottom:1px solid var(--line);font-family:var(--mono);
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
 .prog-bar{height:6px; background:#0C0B08}
 .prog-fill{height:100%; width:0; background:linear-gradient(90deg,var(--amber-deep),var(--amber));
   box-shadow:var(--glow); transition:width .4s ease}
