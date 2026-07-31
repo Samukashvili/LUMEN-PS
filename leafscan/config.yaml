@@ -75,6 +75,16 @@ align:
     detect_interior_holes: false
     min_valid_samples: 3          # valid pixel needs >=3 of 4 warped samples
 
+multi_object:
+  enabled: false                  # detect and reconstruct every separated subject
+  min_component_fraction: 0.001   # reject dust smaller than this fraction of the scan
+  max_objects: 32                 # safety cap for accidental speck detections
+  detection_max_dimension: 1800   # coarse association pass; full detail is kept for solving
+  max_match_cost: 3.0             # fail instead of pairing an uncertain object identity
+  crop_margin_fraction: 0.12      # local background retained around every object crop
+  atlas_size: 4096                # square output map size in pixels
+  gutter_fraction: 0.04           # empty margin inside every atlas cell
+
 solve:
   rejection: "drop_brightest"     # none | drop_brightest | drop_brightest_and_darkest
   min_surviving: 3

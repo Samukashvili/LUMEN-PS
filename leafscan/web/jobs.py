@@ -242,6 +242,9 @@ def _run_pipeline_job(job: dict, sid: str):
             "residual_means": [round(s["mean"], 4) for s in res["residual"]],
             "roughness": res.get("roughness", {}),
         }
+        if "object_count" in res:
+            summary["object_count"] = res["object_count"]
+            summary["atlas_size"] = res["atlas_size"]
         S.set_status(sid, "done", result=summary)
         job["result"] = summary
         job["status"] = "done"

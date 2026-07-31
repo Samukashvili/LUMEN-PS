@@ -14,6 +14,7 @@ import numpy as np
 
 __all__ = [
     "segment_leaf",
+    "segment_objects",
     "detect_aruco",
     "rigid_align",
     "build_proxy",
@@ -64,20 +65,13 @@ def union_leaf_bbox(scan_paths, cfg, coarse=0.25, margin_frac=0.04):
 # --------------------------------------------------------------------------- #
 # Masking (§6.5)
 # --------------------------------------------------------------------------- #
-def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=True,
-                 detect_interior_holes=False):
-    """Segment the subject from the bright platen background.
-
-    By default the thresholded outline is converted to a solid silhouette, so
-    bright or white details enclosed by the subject remain valid reconstruction
-    pixels. ``detect_interior_holes=True`` preserves the previous threshold mask
-    for genuinely perforated subjects, at the cost of also removing enclosed
-    white subject details.
-    """
+def _segment_foreground(luma: np.ndarray, close_radius=5, open_radius=3,
+                        detect_interior_holes=False):
+    """Return the cleaned foreground mask before component selection."""
     x = luma.astype(np.float32)
     x = x / (x.max() + 1e-8)
     u8 = np.clip(x * 255, 0, 255).astype(np.uint8)
-    # leaf is DARKER than the bright white background -> invert so leaf is FG
+    # Subject is DARKER than the bright white background.
     _, th = cv2.threshold(u8, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     mask = th > 0
     if close_radius > 0:
@@ -86,14 +80,68 @@ def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=T
     if open_radius > 0:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_radius * 2 + 1,) * 2)
         mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, k) > 0
+    if not detect_interior_holes:
+        mask = _fill_enclosed_holes(mask)
+    return mask
+
+
+def segment_leaf(luma: np.ndarray, close_radius=5, open_radius=3, keep_largest=True,
+                 detect_interior_holes=False):
+    """Segment one subject from the bright platen background.
+
+    By default the thresholded outline is converted to a solid silhouette, so
+    bright or white details enclosed by the subject remain valid reconstruction
+    pixels. ``detect_interior_holes=True`` preserves the previous threshold mask
+    for genuinely perforated subjects, at the cost of also removing enclosed
+    white subject details.
+    """
+    mask = _segment_foreground(
+        luma, close_radius=close_radius, open_radius=open_radius,
+        detect_interior_holes=detect_interior_holes,
+    )
     if keep_largest:
         n, lbl, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
         if n > 1:
             biggest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
             mask = lbl == biggest
-    if not detect_interior_holes:
-        mask = _fill_enclosed_holes(mask)
     return mask
+
+
+def segment_objects(luma: np.ndarray, close_radius=5, open_radius=3,
+                    detect_interior_holes=False, min_component_fraction=0.001,
+                    max_objects=32):
+    """Detect independent subjects and return their masks and geometry.
+
+    Components are ordered top-to-bottom then left-to-right, giving scan 0 a
+    stable atlas order. Dust and scanner seams are rejected by area rather than
+    by keeping only the largest component.
+    """
+    mask = _segment_foreground(
+        luma, close_radius=close_radius, open_radius=open_radius,
+        detect_interior_holes=detect_interior_holes,
+    )
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask.astype(np.uint8), 8
+    )
+    min_area = max(16, int(round(mask.size * float(min_component_fraction))))
+    found = []
+    for label in range(1, n):
+        area = int(stats[label, cv2.CC_STAT_AREA])
+        if area < min_area:
+            continue
+        x = int(stats[label, cv2.CC_STAT_LEFT])
+        y = int(stats[label, cv2.CC_STAT_TOP])
+        w = int(stats[label, cv2.CC_STAT_WIDTH])
+        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        found.append({
+            "label": label,
+            "area": area,
+            "bbox": (x, y, w, h),
+            "centroid": (float(centroids[label, 0]), float(centroids[label, 1])),
+            "mask": labels == label,
+        })
+    found.sort(key=lambda item: (item["centroid"][1], item["centroid"][0]))
+    return found[:max(1, int(max_objects))]
 
 
 def _fill_enclosed_holes(mask: np.ndarray) -> np.ndarray:
