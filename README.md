@@ -157,9 +157,9 @@ Three estimators are available because four lighting observations cannot conclus
 - **Beckmann** assumes Gaussian-distributed microfacet slopes and usually produces a tighter tail.
 - **Ward** fits the isotropic Ward reflectance profile as an independent comparison.
 
-<p align="center"><img src="docs/assets/kiwi-roughness-model-comparison.png" width="100%" alt="Kiwi leaf roughness comparison showing the consensus, GGX, Beckmann, and Ward results"></p>
+<p align="center"><img src="docs/assets/dry-leaves-roughness-comparison.webp" width="100%" alt="Eight dry leaves packed into matching consensus, GGX, Beckmann, and Ward roughness atlases"></p>
 
-*Full-resolution Kiwi roughness results after baseline retargeting and geometry-guided regularization. The pale, closely grouped values are intentional: this leaf is predominantly matte, so the useful material variation occupies a narrow high-roughness band rather than being normalized to black and white. The consensus suppresses model-specific extremes while retaining vein-scale structure supported across the estimators.*
+*The eight-object dry-leaf scan shown in its delivered consensus atlas and all three fitted models. The pale, closely grouped values are intentional: the leaves are predominantly matte, so useful material variation occupies a narrow high-roughness band rather than being normalized to black and white. The consensus suppresses model-specific extremes while retaining vein-scale structure supported across the estimators.*
 
 In comparison mode the delivered `roughness.png` starts with the per-pixel median of all three baseline-retargeted models. One model-specific outlier therefore cannot turn a matte patch mirror-black or chalk-white. Cross-model disagreement then shrinks that pixel back toward the user's baseline; only structure supported by several reflectance models survives at full strength. The individual maps and `qa/roughness_model_agreement.png` remain available for evaluation. Because a physically plausible matte map is intentionally low-contrast, `qa/roughness_detail_preview.png` amplifies deviations around the baseline for inspection only; it is never used by the viewport or exported material.
 
@@ -250,6 +250,22 @@ directly, so its object positions and boundaries match the exported textures.
 `qa/object_detection.png` records scan 0's numbered component boxes, while
 `multi_object_manifest.json` records match costs, native crop rectangles, and
 atlas placements.
+
+<p align="center"><img src="docs/assets/dry-leaves-atlas-workflow.webp" width="100%" alt="Eight dry leaves detected in one scan and reconstructed into matching albedo and OpenGL normal atlases"></p>
+
+*One real scan from `sessions/dry-leaves-20260731-224313`, followed by its
+lighting-free albedo and OpenGL normal atlases. Detection order becomes atlas
+order, and every exported material map reuses these exact placements.*
+
+<div align="center">
+
+<img src="docs/assets/dry-leaves-relight.gif" width="640" alt="Eight reconstructed dry leaves in a shared texture atlas relit through a full 360 degree orbit with a light direction indicator">
+
+*The complete eight-leaf atlas relit through 360°. The corner indicator tracks
+the light direction; shading uses the same normal, albedo, alpha, perceptual
+roughness, and GGX equations as the interactive result viewport.*
+
+</div>
 
 For reliable separation, leave visible platen background between objects and
 keep every object present in all four captures. The first capture defines
