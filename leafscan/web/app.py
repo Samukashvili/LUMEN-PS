@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
-APP_VERSION = "2026.07-multi-object-v3"
+APP_VERSION = "2026.08-light-side-v2"
 
 
 # ---- models ---------------------------------------------------------------- #

@@ -334,6 +334,10 @@ input[type=range]{accent-color:var(--amber)}
 
 .err-box{border:1px solid #4a2320; background:#170f0e; color:#ffb0aa; border-radius:6px;
   padding:14px 16px; font-family:var(--mono); font-size:12px; white-space:pre-wrap}
+.warn-box{display:flex; flex-direction:column; gap:5px; margin-top:12px; border:1px solid #6b4c20;
+  background:#1b1409; color:#efc477; border-radius:6px; padding:12px 14px;
+  font-family:var(--mono); font-size:11px; line-height:1.45}
+.warn-box b{color:#ffd38a; font-weight:600}.tel-warning .v{color:#efc477; max-width:210px; white-space:normal}
 
 /* ---- process bench ------------------------------------------------------- */
 .process-state{display:flex; align-items:center; gap:10px; min-width:220px; padding:10px 13px;

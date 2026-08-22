@@ -285,12 +285,14 @@ def _run_single_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=N
         f"({100*valid.sum()/max(1,ref_mask.sum()):.1f}% of leaf)")
 
     # ---- 7. calibrate lights (§7) ----
-    az0, el, source = _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack,
-                                 is_srgb, lw, log)
+    fitted_az0, el, source = _calibrate(
+        cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log)
     check_cancelled()
-
+    light_cfg = cfg.get("light", {})
+    light_side_mode = str(light_cfg.get("side", "auto")).strip().lower()
+    provisional_side = "left" if light_side_mode == "auto" else light_side_mode
+    az0 = calib.azimuth_for_light_side(provisional_side, fitted_az0)
     L = light_directions(az0, el, thetas)
-    log(format_light_table(L, thetas, az0, el))
 
     # ---- 8. photometric solve (§8) ----
     scfg = cfg["solve"]
@@ -301,6 +303,62 @@ def _run_single_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=N
                             backend=cfg.get("runtime", {}).get("compute", "auto"))
     check_cancelled()
     normal, albedo_scalar, valid = out["normal"], out["albedo"], out["valid"]
+
+    # The 180-degree lateral-light ambiguity is exact under the photometric
+    # model.  In Auto, resolve it only after a provisional solve so an
+    # independent relief-convexity cue can be combined with the native-frame
+    # platen penumbra.  Switching branches requires no second solve: the two
+    # lateral normal components transform by the same sign flip.
+    if light_side_mode == "auto":
+        light_side, light_side_confidence, light_side_info = calib.detect_light_side(
+            luma, masks, normal, valid, light_cfg.get("auto_side", {}))
+        light_side_suggested = light_side
+        light_side_detection_confidence = light_side_confidence
+        resolved_az0 = calib.azimuth_for_light_side(light_side, fitted_az0)
+        if abs((resolved_az0 - az0 + 180.0) % 360.0 - 180.0) > 90.0:
+            out["normal"][..., :2] *= -1.0
+            normal = out["normal"]
+        az0 = resolved_az0
+        L = light_directions(az0, el, thetas)
+        log(
+            f"[light-side] auto -> {light_side} "
+            f"(confidence={light_side_confidence:.2f}, "
+            f"top-shadow={light_side_info['top_shadow']:.4f}, "
+            f"bottom-shadow={light_side_info['bottom_shadow']:.4f}, "
+            f"ratio={light_side_info['shadow_ratio']:.2f}, "
+            f"edge-votes={light_side_info['edge_vote_fraction']:.2f}, "
+            f"relief-skew={light_side_info['relief_skew']:+.3f}, "
+            f"relief-tail={light_side_info['relief_tail_asymmetry']:+.3f}, "
+            f"{light_side_info['reason']})"
+        )
+    else:
+        # Validation happens in azimuth_for_light_side above.
+        light_side = light_side_mode
+        light_side_confidence = 1.0
+        # Normalize the selected branch back to the left convention before
+        # running the post-solve evidence ensemble.  This lets manual modes
+        # retain deterministic output while still warning about a likely
+        # inverted normal/height result.
+        evidence_normal = normal.copy()
+        if light_side == "right":
+            evidence_normal[..., :2] *= -1.0
+        (light_side_suggested,
+         light_side_detection_confidence,
+         light_side_info) = calib.detect_light_side(
+            luma, masks, evidence_normal, valid,
+            light_cfg.get("auto_side", {}))
+        light_side_info["selection_reason"] = "manual-override"
+        log(
+            f"[light-side] manual -> {light_side}; ensemble suggests "
+            f"{light_side_suggested} "
+            f"(confidence={light_side_detection_confidence:.2f})"
+        )
+    light_side_warning = calib.light_side_warning(
+        light_side_mode, light_side, light_side_suggested,
+        light_side_detection_confidence, light_side_info)
+    if light_side_warning:
+        log(f"[light-side warning] {light_side_warning}")
+    log(format_light_table(L, thetas, az0, el))
     log(f"[solve] rejection={scfg['rejection']} -> {int(valid.sum())} solved pixels")
 
     # ---- 8.5 misregistration repair (§8.5) ----
@@ -642,13 +700,27 @@ def _run_single_pipeline(cfg, scan_paths, out_dir, flat_path=None, calib_paths=N
                         repair=repair_map,
                         backend=compute_backend,
                         extra_text=(
-                            f"light_source={source}  flat={flat_src}\n"
+                            f"light_source={source}  fitted_az0={fitted_az0:.3f}  "
+                            f"light_side_mode={light_side_mode}  light_side={light_side}  "
+                            f"light_side_confidence={light_side_confidence:.3f}  "
+                            f"light_side_suggested={light_side_suggested}  "
+                            f"light_side_detection_confidence="
+                            f"{light_side_detection_confidence:.3f}  "
+                            f"light_side_info={light_side_info}\n"
+                            f"light_side_warning={light_side_warning or 'none'}\n"
+                            f"flat={flat_src}\n"
                             f"roughness={roughness_stats or 'disabled'}"
                         ))
     log(f"[qa] residual means: {[round(s['mean'],4) for s in stats]}  -> {qa_dir}")
     return {"out_dir": out_dir, "az0": az0, "el": el, "thetas": thetas,
             "residual": stats, "valid_px": int(out_valid.sum()),
-            "roughness": roughness_stats}
+            "roughness": roughness_stats, "light_side": light_side,
+            "light_side_mode": light_side_mode,
+            "light_side_confidence": light_side_confidence,
+            "light_side_suggested": light_side_suggested,
+            "light_side_detection_confidence": light_side_detection_confidence,
+            "light_side_info": light_side_info,
+            "light_side_warning": light_side_warning}
 
 
 def _mask_kw(cfg):
@@ -805,6 +877,9 @@ def _common_content_bbox(luma, cfg, margin_frac=0.04):
 
 def _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log):
     lc = cfg["light"]
+    requested_side = str(lc.get("side", "auto")).strip().lower()
+    seed_side = "left" if requested_side == "auto" else requested_side
+    azimuth_seed = calib.azimuth_for_light_side(seed_side, lc["az0_deg"])
     if calib_paths:  # Method A
         c0, c90 = calib_paths
         r0, _ = io.load_image_linear(c0, is_srgb, cfg["runtime"]["scale"])
@@ -816,12 +891,12 @@ def _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log)
         if m0.mean() < 0.05:
             m0 = np.ones_like(m0); m90 = np.ones_like(m90)
         az0, el, err, info = calib.calibrate_from_corrugated(
-            l0, m0, l90, m90, az0_prior=lc["az0_deg"])
+            l0, m0, l90, m90, az0_prior=azimuth_seed)
         return az0, el, f"cardboard(err={err:.4f})"
 
     if lc["source"] == "config":
-        log(f"[calib] using config az0={lc['az0_deg']} el={lc['el_deg']}")
-        return lc["az0_deg"], lc["el_deg"], "config"
+        log(f"[calib] using config az0={azimuth_seed} el={lc['el_deg']}")
+        return azimuth_seed, lc["el_deg"], "config"
 
     # Method B — self-cal on a downscaled copy for speed.
     # Force rejection='none': with 4 samples and 3 unknowns the fit is
@@ -832,7 +907,7 @@ def _calibrate(cfg, calib_paths, I_stack, thetas, valid_stack, is_srgb, lw, log)
     ds = _downscale_stack(I_stack, 0.25)
     dv = _downscale_stack(valid_stack.astype(np.float32), 0.25) > 0.5
     az0, el, r, info = calib.self_calibrate(
-        ds, thetas, valid_stack=dv, az0_seed=lc["az0_deg"], el_seed=lc["el_deg"],
+        ds, thetas, valid_stack=dv, az0_seed=azimuth_seed, el_seed=lc["el_deg"],
         rejection="none", min_surviving=cfg["solve"]["min_surviving"])
     return az0, el, f"selfcal(res={r:.4f})"
 
@@ -860,6 +935,8 @@ def main(argv=None):
     r.add_argument("--calib", default=None, help="corrugated 0deg,90deg comma pair")
     r.add_argument("--config", default=None)
     r.add_argument("--scale", type=float, default=None)
+    r.add_argument("--light-side", choices=("auto", "left", "right"), default=None,
+                   help="scanner lamp side: auto-detect, left (azimuth 90), or right (270)")
     r.add_argument("--auto-crop", dest="auto_crop", action="store_true",
                    help="crop scans to a common leaf ROI (fits full-res in memory)")
     r.add_argument("--quiet", action="store_true")
@@ -889,6 +966,8 @@ def main(argv=None):
 
     if args.cmd == "run":
         cfg = load_config(args.config)
+        if args.light_side is not None:
+            cfg.setdefault("light", {})["side"] = args.light_side
         scans = _find_scans(args.scans)
         calib_paths = args.calib.split(",") if args.calib else None
         res = run_pipeline(cfg, scans, args.out, flat_path=args.flat,

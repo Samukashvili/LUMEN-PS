@@ -34,7 +34,7 @@ def _render(z, rho, mask, rotation, light):
     return np.where(mask, intensity, 1.0)
 
 
-def _write_two_object_scans(root, size=120):
+def _write_two_object_scans(root, size=120, largest_not_first=False):
     scan_dir = root / "scans"
     scan_dir.mkdir()
     light = light_direction(90, 35)
@@ -43,7 +43,8 @@ def _write_two_object_scans(root, size=120):
     # must follow appearance, not the object's bed position.
     for k in range(4):
         canvas = np.ones((size + 30, size * 2 + 60), np.float32)
-        order = (0, 1) if k % 2 == 0 else (1, 0)
+        order = ((1, 0) if k % 2 == 0 else (0, 1)) if largest_not_first \
+            else ((0, 1) if k % 2 == 0 else (1, 0))
         for slot, subject_index in enumerate(order):
             image = _render(*subjects[subject_index], k, light)
             x = 15 + slot * (size + 30)
@@ -72,7 +73,10 @@ def test_association_survives_position_swaps_and_rotation(tmp_path):
 
 
 def test_multi_object_pipeline_exports_one_square_shared_atlas(tmp_path):
-    scans = _write_two_object_scans(tmp_path)
+    # Put the largest subject second in scan-0 atlas order.  Auto reconstructs
+    # it first, so returned side metadata must follow reconstruction order,
+    # while the output placements must remain in atlas order.
+    scans = _write_two_object_scans(tmp_path, largest_not_first=True)
     cfg = load_config()
     cfg["multi_object"]["enabled"] = True
     cfg["multi_object"]["atlas_size"] = 512
@@ -86,6 +90,8 @@ def test_multi_object_pipeline_exports_one_square_shared_atlas(tmp_path):
 
     assert result["object_count"] == 2
     assert result["atlas_size"] == 512
+    assert result["light_side_mode"] == "auto"
+    assert result["light_side_info"]["reason"] != "manual-override"
     for filename in ("normal_gl.png", "normal_dx.png", "albedo.png",
                      "albedo_srgb.png", "alpha.png",
                      "albedo_srgb_rgba.png", "normal_gl_rgba.png"):

@@ -324,8 +324,8 @@ def run_multi_object_pipeline(
     log(f"[objects] associated {len(tracks)} objects across every rotation")
 
     crop_boxes = [[None] * len(scan_paths) for _ in tracks]
-    object_results = []
-    object_output_dirs = []
+    object_results = [None] * len(tracks)
+    object_output_dirs = [None] * len(tracks)
     margin = float(cfg.get("multi_object", {}).get("crop_margin_fraction", 0.12))
     with tempfile.TemporaryDirectory(prefix="lumen-multi-") as temp_name:
         temp = Path(temp_name)
@@ -349,10 +349,20 @@ def run_multi_object_pipeline(
         object_cfg.setdefault("multi_object", {})["enabled"] = False
         object_cfg["align"]["mask"]["keep_largest"] = True
         object_cfg["runtime"]["auto_crop"] = True
-        for object_index in range(len(tracks)):
+        requested_light_side = str(
+            object_cfg.get("light", {}).get("side", "auto")
+        ).lower()
+        reconstruction_order = list(range(len(tracks)))
+        if requested_light_side == "auto":
+            largest = max(reconstruction_order,
+                          key=lambda index: tracks[index][0]["area"])
+            reconstruction_order.remove(largest)
+            reconstruction_order.insert(0, largest)
+        for sequence_index, object_index in enumerate(reconstruction_order):
             check_cancelled()
             number = object_index + 1
-            log(f"[objects] reconstructing object {number}/{len(tracks)}")
+            log(f"[objects] reconstructing object {sequence_index + 1}/{len(tracks)}"
+                + (f" (atlas cell {number})" if sequence_index != object_index else ""))
             scan_root = temp / "scans" / f"object_{number:02d}"
             object_out = temp / "results" / f"object_{number:02d}"
             result = _run_single_pipeline(
@@ -367,8 +377,20 @@ def run_multi_object_pipeline(
                 auto_crop=True,
                 cancel_check=cancel_check,
             )
-            object_results.append(result)
-            object_output_dirs.append(object_out)
+            object_results[object_index] = result
+            object_output_dirs[object_index] = object_out
+            # Lamp side is a scanner property, not an object property.  Let the
+            # largest/first tracked object resolve Auto once, then lock every
+            # remaining reconstruction to that branch so all atlas cells share
+            # exactly the same normal and height convention.
+            if sequence_index == 0 and requested_light_side == "auto":
+                object_cfg.setdefault("light", {})["side"] = result["light_side"]
+
+        # ``object_results`` is restored to atlas order, which is not
+        # necessarily reconstruction order: Auto deliberately processes the
+        # largest subject first.  Preserve that detecting result for summary
+        # metadata instead of accidentally reporting a later manual lock.
+        light_side_result = object_results[reconstruction_order[0]]
 
         check_cancelled()
         atlas = pack_atlas(object_output_dirs, out_dir, cfg)
@@ -426,6 +448,16 @@ def run_multi_object_pipeline(
         "residual": residual,
         "valid_px": sum(result["valid_px"] for result in object_results),
         "roughness": {"objects": len(object_results)},
+        "light_side": light_side_result.get("light_side", "left"),
+        "light_side_mode": requested_light_side,
+        "light_side_confidence": light_side_result.get(
+            "light_side_confidence", 0.0),
+        "light_side_suggested": light_side_result.get(
+            "light_side_suggested", light_side_result.get("light_side", "left")),
+        "light_side_detection_confidence": light_side_result.get(
+            "light_side_detection_confidence", 0.0),
+        "light_side_info": light_side_result.get("light_side_info", {}),
+        "light_side_warning": light_side_result.get("light_side_warning"),
         "object_count": len(object_results),
         "atlas_size": atlas["size"],
     }

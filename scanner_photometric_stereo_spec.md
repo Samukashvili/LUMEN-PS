@@ -87,6 +87,12 @@ The real CIS lamp is an **extended line source parallel to the sensor line**, no
 
 **Practical prior:** expect the fitted azimuth to land near the travel axis (`az ≈ 90°` or `≈ 270°`). Use this only as a sanity check / initialization, never as a hardcoded value.
 
+There is an exact binary sign ambiguity between these two branches. Replacing
+every light `(Lx, Ly, Lz)` with `(-Lx, -Ly, Lz)` and every recovered normal
+`(Nx, Ny, Nz)` with `(-Nx, -Ny, Nz)` leaves every Lambertian dot product and
+re-render residual unchanged. Integrability does not remove it: the two height
+fields are the global concave/convex pair.
+
 The distant-point-light approximation is imperfect here. **Do not attempt to model the line source analytically.** Instead, fit `az` and `el` empirically against a known target (§7) so the calibration absorbs the model error.
 
 ---
@@ -277,7 +283,7 @@ Single-face corrugated card has ridges of approximately known, regular, near-sin
 2. Extract the ridge profile (average many ridges to kill noise).
 3. The **shading asymmetry across each ridge** — how much brighter the light-facing flank is than the away-facing flank — is a direct function of `el`. Low `el` (grazing) → strong asymmetry and possible self-shadowing. High `el` (near-coaxial) → weak asymmetry.
 4. Fit `(az₀, el)` by nonlinear least squares: forward-render the known ridge profile under `L(az, el)` with a Lambertian model and minimize residual vs. the observed scan.
-5. The **0° vs 90° pair also directly disambiguates `az₀`**: whichever axis shows the stronger ridge asymmetry is the axis the light is tilted along.
+5. The **0° vs 90° pair identifies the travel axis**: whichever axis shows the stronger ridge asymmetry is the axis the light is tilted along. A symmetric ridge profile still does not identify which of the two opposite directions on that axis contains the lamp.
 
 ### Method B — self-calibration fallback
 
@@ -286,6 +292,39 @@ If no calibration target is available, treat `el` as a **single global scalar pa
 - Fit it by minimizing the **re-rendering residual** (§8.4) across the whole leaf.
 
 Expose `el` and `az0` as config values with the fitted results as defaults. **Always log which method produced them.**
+
+### Left/right branch selection
+
+Expose `light.side = auto | left | right` in processing settings. `left` selects
+the azimuth branch centred on 90° and `right` the branch centred on 270°.
+Because the photometric residual cannot make this choice, Auto must use cues
+outside that invariant objective. The implementation aggregates five methods
+in two independent evidence groups:
+
+1. **Scanner-frame evidence:** multi-scale platen-penumbra strength outside the
+   top/bottom subject boundary, plus consistency voting across all unaligned
+   captures and edge bands.
+2. **Reconstructed-output evidence:** robust skew, quantile-tail asymmetry, and
+   multi-scale polarity of band-passed provisional relief integrated from the
+   recovered normal field.
+
+Only switch to the right branch when both groups support it and at least two of
+the three output-relief methods agree. Resolve left when the opposite-edge
+penumbra is absent by a wide margin in every usable capture and scale, even if
+shape-derived relief priors disagree; this prevents curled or asymmetric
+subjects from producing false uncertainty. If scanner evidence is marginal or
+missing and the groups disagree, retain the left compatibility prior, report
+low confidence, and let the manual setting decide. Run the same post-solve evidence calculation for manual modes
+without changing their deterministic result; if it confidently favors the
+opposite side, warn that the normal and height maps are likely inverted. Apply
+the selected branch to the light vectors before all downstream normal cleanup,
+colour-albedo recovery, roughness fitting, height integration, QA, preview, and
+export; do not patch only the encoded normal-map channels.
+
+Physical clockwise/counter-clockwise wording is not a reliable scanner-model
+signal because a driver may mirror an output axis. Rotation order is validated
+in image coordinates by the recovered registration sequence and remains
+separate from the 180° light-side branch.
 
 ---
 

@@ -5,7 +5,7 @@ import { advanceProgress, progressFromLines } from './progress.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.07-multi-object-v3';
+const EXPECTED_BACKEND = '2026.08-light-side-v2';
 const STAGES = ['capture', 'process', 'results'];
 const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Roughness', 'Integrate', 'Output'];
 
@@ -443,6 +443,9 @@ function renderProcess() {
           ${selectControl('multi_object.atlas_size', 'Square atlas size', 'Resolution used by every exported map and the result viewport.', [
             [2048, '2048 × 2048'], [4096, '4096 × 4096'], [8192, '8192 × 8192']])}</div>
         <div class="settings-section"><div class="settings-title"><span>02</span><div><b>Photometric solve</b><small>How observations become normals.</small></div></div>
+          ${selectControl('light.side', 'Scanner light side', 'Auto combines scanner-frame edge shadow and recovered-relief cues. Override it for unusual recessed surfaces.', [
+            ['auto', 'Auto (recommended)'], ['left', 'Light on the left side'],
+            ['right', 'Light on the right side']])}
           ${selectControl('solve.rejection', 'Outlier rejection', 'Remove glare and shadow samples per pixel.', [
             ['none', 'None'], ['drop_brightest', 'Drop brightest'], ['drop_brightest_and_darkest', 'Drop brightest + darkest']])}
           ${toggleControl('align.nonrigid.enabled', 'Non-rigid alignment', 'Correct small deformations between rotations.')}
@@ -554,11 +557,15 @@ async function restoreJobState() {
 }
 function showSummary(r, withAction = false) {
   const box = $('#run-summary'); if (!box || !r) return;
+  const sideConfidence = r.light_side_mode === 'auto' && Number.isFinite(r.light_side_confidence)
+    ? ` · ${Math.round(r.light_side_confidence * 100)}%` : '';
   box.innerHTML = `${r.object_count ? `<div class="mono muted">${r.object_count} independently aligned objects · ${r.atlas_size} × ${r.atlas_size} atlas</div>` : ''}
-    <div class="summary-grid"><div class="stat"><div class="n">${r.az0.toFixed(0)}&deg;</div><div class="l">azimuth</div></div>
+    <div class="summary-grid"><div class="stat"><div class="n">${esc(r.light_side || 'left')}</div><div class="l">light side${r.light_side_mode === 'auto' ? ` / auto${sideConfidence}` : ''}</div></div>
+    <div class="stat"><div class="n">${r.az0.toFixed(0)}&deg;</div><div class="l">azimuth</div></div>
     <div class="stat"><div class="n">${r.el.toFixed(0)}&deg;</div><div class="l">elevation</div></div>
     <div class="stat"><div class="n">${Math.max(...r.residual_means).toFixed(3)}</div><div class="l">max residual</div></div>
     <div class="stat"><div class="n">${(r.valid_px / 1e6).toFixed(1)}M</div><div class="l">solved px</div></div></div>
+    ${r.light_side_warning ? `<div class="warn-box"><b>Check scanner light side</b>${esc(r.light_side_warning)}</div>` : ''}
     ${withAction ? '<button class="btn btn--primary result-jump" id="to-results">Inspect results &rarr;</button>' : ''}`;
   $('#to-results')?.addEventListener('click', () => gotoStage('results'));
 }
@@ -749,6 +756,8 @@ function paintTelemetry() {
     light = `<div class="tel-group"><div class="tel-k">Light vectors L[k]</div><div class="lvec">${vectors.map((v, i) =>
       `<span>L${i}</span><span><span class="cx">${v.x}</span> <span class="cy">${v.y}</span> <span class="cz">${v.z}</span></span>`).join('')}</div>
       <div class="tel-row"><span class="tel-k">az0 / el</span><span class="v">${r.az0.toFixed(1)}&deg; / ${r.el.toFixed(1)}&deg;</span></div>
+      <div class="tel-row"><span class="tel-k">light side</span><span class="v">${esc(r.light_side || 'left')} (${esc(r.light_side_mode || 'auto')}${r.light_side_mode === 'auto' && Number.isFinite(r.light_side_confidence) ? `, ${Math.round(r.light_side_confidence * 100)}%` : ''})</span></div>
+      ${r.light_side_warning ? `<div class="tel-row tel-warning"><span class="tel-k">warning</span><span class="v">${esc(r.light_side_warning)}</span></div>` : ''}
       <div class="tel-row"><span class="tel-k">residual</span><span class="v settle">${r.residual_means.map(x => x.toFixed(3)).join(' ')}</span></div></div>`;
   }
   $('#tel-body').innerHTML = `<div class="tel-group"><div class="tel-k">Bench</div>

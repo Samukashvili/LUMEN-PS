@@ -31,10 +31,36 @@ io:
 
 light:
   # Fitted by calibrate.py; these are seeds / fallbacks (spec §7, §3.3).
+  side: "auto"                    # auto | left (azimuth 90) | right (azimuth 270)
   az0_deg: 90.0                   # prior: light tilts along Y (travel) axis
   el_deg: 30.0                    # MUST be calibrated, never trusted as-is
   rotation_sign: 1                # direction of physical card rotation; fiducials override. See lights.py
   source: "seed"                  # overwritten to 'cardboard'/'selfcal'/'config' at runtime
+  # Diffuse re-rendering alone has an exact 180-degree sign ambiguity. Auto
+  # changes the left-side compatibility prior only when a scanner-frame
+  # multi-scale penumbra ensemble and reconstructed-relief ensemble agree.
+  auto_side:
+    max_dimension: 512
+    edge_band_scales: [0.75, 1.0, 1.5]
+    edge_near_start_px: 2
+    edge_near_stop_px: 6
+    edge_far_start_px: 10
+    edge_far_stop_px: 20
+    minimum_edge_columns: 32
+    right_min_bottom_shadow: 0.012
+    right_min_shadow_ratio: 0.25
+    right_min_edge_vote_fraction: 0.25
+    right_min_edge_scan_vote_fraction: 0.25
+    # Unanimous measurements far below these limits are positive left-side
+    # evidence and may overrule shape priors distorted by leaf curl.
+    left_max_bottom_shadow: 0.006
+    left_max_shadow_ratio: 0.125
+    relief_highpass_sigma: 2.0
+    relief_sigma_scales: [0.75, 1.0, 2.0]
+    right_max_relief_skew: -0.15
+    right_max_relief_tail_asymmetry: -0.08
+    right_min_relief_vote_fraction: 0.50
+    minimum_relief_pixels: 1024
 
 align:
   fiducials:

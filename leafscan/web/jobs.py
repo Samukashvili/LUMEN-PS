@@ -241,6 +241,13 @@ def _run_pipeline_job(job: dict, sid: str):
             "valid_px": res["valid_px"],
             "residual_means": [round(s["mean"], 4) for s in res["residual"]],
             "roughness": res.get("roughness", {}),
+            "light_side": res.get("light_side", "left"),
+            "light_side_mode": res.get("light_side_mode", "auto"),
+            "light_side_confidence": res.get("light_side_confidence", 0.0),
+            "light_side_suggested": res.get("light_side_suggested", "left"),
+            "light_side_detection_confidence": res.get(
+                "light_side_detection_confidence", 0.0),
+            "light_side_warning": res.get("light_side_warning"),
         }
         if "object_count" in res:
             summary["object_count"] = res["object_count"]

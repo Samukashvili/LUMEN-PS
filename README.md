@@ -94,6 +94,39 @@ This mask is shared by cropping, alignment, per-pixel validity, height integrati
 | **7 · Extract roughness** | Fit GGX, Beckmann, or Ward specular lobes and retarget the robust centre to a user-estimated baseline. | Preserves measured local variation without falsely stretching every result from black to white. |
 | **8 · Integrate + verify** | Integrate the cleaned normal field into height, then re-render all four input views. | Residual images show where the model explains—or fails to explain—the measurements. |
 
+### Scanner light side and the 180° ambiguity
+
+Some scanner carriages place the lamp on the opposite side of the sensor. That
+changes the first light azimuth from approximately 90° (**left**) to 270°
+(**right**). A diffuse re-render cannot choose between them: rotating every
+lateral light component by 180° and rotating the recovered lateral normals by
+the same amount produces the identical residual. Choosing the wrong branch
+therefore inverts both red and green in the OpenGL normal map and reverses the
+integrated height field while still looking numerically calibrated.
+
+The Process screen exposes **Scanner light side** with **Auto**, **Light on the
+left side**, and **Light on the right side**. Auto is conservative and combines
+five votes in two independent groups: multi-scale platen-penumbra strength and
+cross-scan consistency in the native scanner frame, plus robust skew,
+quantile-tail asymmetry, and multi-scale polarity calculated from the
+provisional normal/height reconstruction. It selects right only when both the
+scanner group and the reconstructed-relief group agree. Unanimous, high-margin
+left-side platen evidence can resolve left even when object shape or curl makes
+the relief prior disagree; a marginal disagreement remains inconclusive. The
+resolved side, confidence, azimuth,
+light vectors, every cue value, and each method vote are written to the run log
+and QA report. A visible warning appears when Auto is inconclusive or when a
+manual choice strongly conflicts with the post-solve evidence. Use the explicit
+override for deliberately recessed/engraved surfaces or captures whose edge
+shadow is unavailable.
+
+Lamp side and rotation order are separate properties. Some scanner drivers
+mirror an image axis, so a physical counter-clockwise turn can have the same
+image-space registration sequence as a clockwise turn on another model. The
+tested right-lamp captures and the local left-lamp captures both recover the
+expected image-space sequence near `[0, +90, +180, -90]`; the light-side fix
+therefore does not reorder scans or swap the ±90° observations.
+
 ### What comes out
 
 | Kiwi albedo (lighting removed) | Kiwi OpenGL normal map | Kiwi integrated height |
@@ -327,7 +360,7 @@ The mathematical model assumes mostly diffuse reflection and shallow relief. Mil
 2. Connect the scanner and install its WIA driver.
 3. Double-click `run.bat`.
 
-The launcher creates an isolated `.venv`, installs dependencies, starts the local LUMEN-PS bench, and opens `http://127.0.0.1:8756`. In the app: create a session, capture four rotations, process, then drag the light around the interactive result. The Process screen keeps **Detect holes in subject** off by default; enable it only when the subject has real cutouts and heed the warning about white object details.
+The launcher creates an isolated `.venv`, installs dependencies, starts the local LUMEN-PS bench, and opens `http://127.0.0.1:8756`. In the app: create a session, capture four rotations, process, then drag the light around the interactive result. The Process screen defaults **Scanner light side** to Auto and keeps **Detect holes in subject** off; enable hole detection only when the subject has real cutouts and heed the warning about white object details.
 
 If an NVIDIA GPU is detected, the first launch also installs the project-local CUDA runtime, cuBLAS, and cuFFT packages. This is a large one-time download; no system-wide CUDA Toolkit installation is required. Systems without a compatible NVIDIA GPU continue with the optimized CPU backend.
 
@@ -344,7 +377,8 @@ python -m leafscan.cli capture --preview
 python -m leafscan.cli capture --out scans\sample\k0.png --dpi 600 --color
 # Rotate the subject and repeat for k1.png, k2.png, and k3.png.
 
-python -m leafscan.cli run --scans scans\sample --out out
+python -m leafscan.cli run --scans scans\sample --out out --light-side auto
+# Deterministic overrides: --light-side left | --light-side right
 ```
 
 Optional references:
