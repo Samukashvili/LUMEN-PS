@@ -29,15 +29,6 @@ button{font-family:inherit}
 .eyebrow{font-family:var(--mono); font-size:10.5px; letter-spacing:.22em;
   text-transform:uppercase; color:var(--dim)}
 
-/* ---- CRT overlays (moderate) --------------------------------------------- */
-.crt{position:fixed; inset:0; z-index:60; pointer-events:none}
-.crt-scan{position:absolute; inset:0; background:
-  repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px);
-  mix-blend-mode:multiply; opacity:.55; animation:flicker 6s infinite steps(60)}
-.crt-vignette{position:absolute; inset:0; background:
-  radial-gradient(120% 120% at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%);}
-@keyframes flicker{0%,97%{opacity:.55}98%{opacity:.42}99%{opacity:.6}100%{opacity:.5}}
-
 /* ---- topbar -------------------------------------------------------------- */
 .topbar{position:fixed; top:0; left:0; right:0; height:52px; z-index:40;
   display:flex; align-items:center; justify-content:space-between;
@@ -111,6 +102,11 @@ button{font-family:inherit}
 .recent-item:hover{border-color:var(--amber-deep)}
 .recent-item .r-name{font-weight:500}
 .recent-item .r-meta{font-family:var(--mono); font-size:10.5px; color:var(--dim)}
+.recent-actions{display:flex;gap:6px;margin-left:auto}
+.recent-action{background:transparent;border:1px solid var(--line);border-radius:4px;color:var(--dim);
+  font-family:var(--mono);font-size:9px;padding:4px 6px;cursor:pointer}
+.recent-rename:hover{color:var(--amber);border-color:var(--amber-deep)}
+.recent-delete:hover{color:#ffb0aa;border-color:#6d302a}
 .tag{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   padding:2px 8px; border-radius:100px; border:1px solid var(--line); color:var(--dim)}
 .tag--done{color:var(--ok); border-color:#274b38}
@@ -126,6 +122,7 @@ button{font-family:inherit}
 .modal-label{display:block; margin:0 0 6px; font-family:var(--mono); font-size:11px;
   color:var(--dim); letter-spacing:.08em; text-transform:uppercase}
 .modal input{width:100%}
+.modal .modal-error{margin:9px 0 0;color:#ffb0aa;font-family:var(--mono);font-size:11px}
 .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:18px}
 .shutdown-screen{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:24px;
   background:radial-gradient(circle at 50% 42%,#17120d 0,#090807 52%,#050505 100%)}
@@ -236,8 +233,6 @@ button{font-family:inherit}
 .scan-grid--optional{grid-template-columns:repeat(3,minmax(130px,1fr)); max-width:720px}
 
 .scan-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px}
-.recent-delete{margin-left:auto;background:transparent;border:1px solid var(--line);border-radius:4px;color:var(--dim);
-  font-family:var(--mono);font-size:9px;padding:4px 6px;cursor:pointer}.recent-delete:hover{color:#ffb0aa;border-color:#6d302a}
 @media(max-width:1100px){.scan-grid{grid-template-columns:repeat(2,1fr)}}
 .slot{border:1px dashed var(--line); border-radius:6px; aspect-ratio:1/1.15;
   display:flex; flex-direction:column; overflow:hidden; background:var(--panel);
@@ -409,7 +404,6 @@ input[type=range]{accent-color:var(--amber)}
 
 /* ---- reduced motion: strip the theatrics, keep the palette ---------------- */
 @media (prefers-reduced-motion: reduce){
-  .crt-scan{animation:none; opacity:.35}
   .boot-sweep{display:none}
   .pill--idle .led,.dot.busy{animation:none}
   .settle{animation:none}

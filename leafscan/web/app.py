@@ -25,12 +25,16 @@ HERE = Path(__file__).resolve().parent
 STATIC = HERE / "static"
 
 app = FastAPI(title="LUMEN-PS")
-APP_VERSION = "2026.08-light-side-v2"
+APP_VERSION = "2026.08-session-library-v2"
 
 
 # ---- models ---------------------------------------------------------------- #
 class NewSession(BaseModel):
     name: str = "Untitled leaf"
+
+
+class RenameSessionReq(BaseModel):
+    name: str
 
 
 class CaptureReq(BaseModel):
@@ -86,6 +90,18 @@ def api_get_session(sid: str):
     m["ready"] = S.ready_to_run(sid)
     m["busy"] = jobs.is_busy(sid)
     return m
+
+
+@app.patch("/api/sessions/{sid}")
+def api_rename_session(sid: str, body: RenameSessionReq):
+    if not S.load_meta(sid):
+        raise HTTPException(404, "Session not found")
+    if jobs.is_busy(sid):
+        raise HTTPException(409, "Cancel or wait for the active job before renaming this session")
+    try:
+        return S.rename_session(sid, body.name)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/sessions/{sid}/config")

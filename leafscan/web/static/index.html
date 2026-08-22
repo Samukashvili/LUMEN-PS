@@ -8,12 +8,6 @@
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
-<!-- CRT overlays (disabled under prefers-reduced-motion) -->
-<div class="crt" aria-hidden="true">
-  <div class="crt-scan"></div>
-  <div class="crt-vignette"></div>
-</div>
-
 <header class="topbar">
   <div class="brand">
     <span class="mark">LUMEN&#8209;PS</span>
@@ -60,10 +54,25 @@
     <h2 id="new-session-title">Name this specimen</h2>
     <p>Use a clear name so its scans and reconstruction remain easy to find.</p>
     <label class="modal-label" for="new-session-name">Specimen name</label>
-    <input id="new-session-name" name="name" type="text" maxlength="80" value="Grape leaf" autocomplete="off" required>
+    <input id="new-session-name" name="name" type="text" maxlength="80" autocomplete="off" required>
     <div class="modal-actions">
       <button id="new-session-cancel" class="btn btn--ghost" type="button">Cancel</button>
       <button class="btn btn--primary" type="submit">Create session</button>
+    </div>
+  </form>
+</div>
+
+<div id="rename-session-dialog" class="modal-backdrop" hidden>
+  <form id="rename-session-form" class="modal" aria-labelledby="rename-session-title">
+    <div class="eyebrow">Session library</div>
+    <h2 id="rename-session-title">Rename this session</h2>
+    <p>Only the displayed name changes. Its workspace, scans, and exported files stay in place.</p>
+    <label class="modal-label" for="rename-session-name">Session name</label>
+    <input id="rename-session-name" name="name" type="text" maxlength="80" autocomplete="off" required>
+    <p id="rename-session-error" class="modal-error" hidden></p>
+    <div class="modal-actions">
+      <button id="rename-session-cancel" class="btn btn--ghost" type="button">Cancel</button>
+      <button class="btn btn--primary" type="submit">Save name</button>
     </div>
   </form>
 </div>

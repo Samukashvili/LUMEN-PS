@@ -89,6 +89,33 @@ def test_session_can_use_external_output_directory(tmp_path: Path, monkeypatch):
     assert sessions.out_dir(meta["id"]) == sessions.session_dir(meta["id"]) / "out"
 
 
+def test_session_can_be_renamed_without_moving_its_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Original name")
+    scan = sessions.scans_dir(meta["id"]) / "k0.png"
+    scan.write_bytes(b"scan")
+
+    renamed = sessions.rename_session(meta["id"], "  Better specimen name  ")
+
+    assert renamed["name"] == "Better specimen name"
+    assert renamed["id"] == meta["id"]
+    assert sessions.session_dir(meta["id"]).exists()
+    assert scan.exists()
+    assert sessions.load_meta(meta["id"])["name"] == "Better specimen name"
+
+
+def test_session_rename_rejects_blank_name(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
+    meta = sessions.create_session("Original name")
+
+    try:
+        sessions.rename_session(meta["id"], "   ")
+    except ValueError as exc:
+        assert "cannot be empty" in str(exc)
+    else:
+        raise AssertionError("blank session names must be rejected")
+
+
 def test_rescan_invalidates_previous_result(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(sessions, "SESSIONS_DIR", tmp_path / "sessions")
     meta = sessions.create_session("Rescan test")

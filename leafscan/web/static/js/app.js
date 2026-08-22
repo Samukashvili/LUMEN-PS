@@ -5,7 +5,7 @@ import { advanceProgress, progressFromLines } from './progress.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const LEAF = ['k0', 'k1', 'k2', 'k3'];
-const EXPECTED_BACKEND = '2026.08-light-side-v2';
+const EXPECTED_BACKEND = '2026.08-session-library-v2';
 const STAGES = ['capture', 'process', 'results'];
 const PSTAGES = ['Load', 'Align', 'Calibrate', 'Solve', 'Roughness', 'Integrate', 'Output'];
 
@@ -38,7 +38,7 @@ const S = {
   jobKind: null, jobStatus: 'idle', jobCursor: 0, jobResult: null,
   processStage: 0, processMulti: false, processObject: 0, processObjectCount: 0,
   resultMode: 'relight', selectedResult: null,
-  removeImportRole: null, deviceBusy: false,
+  removeImportRole: null, renameCandidate: null, deviceBusy: false,
 };
 
 // ---- helpers --------------------------------------------------------------
@@ -98,6 +98,8 @@ async function boot() {
   $('#btn-new').addEventListener('click', openNewSession);
   $('#new-session-cancel').addEventListener('click', closeNewSession);
   $('#new-session-form').addEventListener('submit', newSession);
+  $('#rename-session-cancel').addEventListener('click', closeRenameSession);
+  $('#rename-session-form').addEventListener('submit', renameSession);
   $('#reset-scans-cancel').addEventListener('click', closeResetScans);
   $('#reset-scans-confirm').addEventListener('click', resetAllScans);
   $('#remove-import-cancel').addEventListener('click', closeRemoveImport);
@@ -111,12 +113,16 @@ async function boot() {
   $('#back-to-sessions').addEventListener('click', returnToRecent);
   document.querySelectorAll('.stage').forEach(b =>
     b.addEventListener('click', () => gotoStage(b.dataset.stage)));
+  // The WIA device probe can take several seconds or stall while the driver is
+  // busy. Populate the independent session library before probing hardware so
+  // existing sessions are immediately available on startup.
+  await paintRecent();
   const [deviceResult, backendResult] = await Promise.allSettled([api.device(), api.version()]);
   S.device = deviceResult.status === 'fulfilled' ? deviceResult.value
     : { connected: false, note: 'Scanner status could not be read. It will retry after capture.' };
   S.backendCurrent = backendResult.status === 'fulfilled'
     && backendResult.value.version === EXPECTED_BACKEND;
-  paintDevice(); await paintRecent();
+  paintDevice();
 }
 
 function confirmScannerFromCapture(depth = null) {
@@ -165,16 +171,47 @@ async function paintRecent() {
     const tag = m.status === 'done' ? 'tag--done' : m.status === 'ready' ? 'tag--ready' : '';
     li.innerHTML = `<span class="r-name">${esc(m.name)}</span><span class="r-meta">
       ${m.created.slice(0, 16).replace('T', ' ')} <span class="tag ${tag}">${m.status}</span></span>
-      <button class="recent-delete" type="button" data-delete="${escAttr(m.id)}" aria-label="Remove ${escAttr(m.name)}">Delete</button>`;
+      <span class="recent-actions">
+        <button class="recent-action recent-rename" type="button" aria-label="Rename ${escAttr(m.name)}">Rename</button>
+        <button class="recent-action recent-delete" type="button" aria-label="Remove ${escAttr(m.name)}">Delete</button>
+      </span>`;
     li.onclick = () => enterSession(m.id); ul.appendChild(li);
+    $('.recent-rename', li).addEventListener('click', e => { e.stopPropagation(); openRenameSession(m); });
     $('.recent-delete', li).addEventListener('click', e => { e.stopPropagation(); openDeleteSession(m); });
   });
 }
 function openNewSession() {
   $('#new-session-dialog').hidden = false;
-  const input = $('#new-session-name'); input.focus(); input.select();
+  const input = $('#new-session-name'); input.value = ''; input.focus();
 }
 function closeNewSession() { $('#new-session-dialog').hidden = true; }
+function openRenameSession(meta) {
+  S.renameCandidate = meta;
+  $('#rename-session-error').hidden = true;
+  $('#rename-session-dialog').hidden = false;
+  const input = $('#rename-session-name'); input.value = meta.name; input.focus(); input.select();
+}
+function closeRenameSession() {
+  $('#rename-session-dialog').hidden = true;
+  S.renameCandidate = null;
+}
+async function renameSession(e) {
+  e.preventDefault();
+  const candidate = S.renameCandidate;
+  if (!candidate) return;
+  const input = $('#rename-session-name');
+  const submit = $('#rename-session-form button[type="submit"]');
+  const error = $('#rename-session-error');
+  submit.disabled = true; error.hidden = true;
+  try {
+    await api.renameSession(candidate.id, input.value);
+    closeRenameSession();
+    await paintRecent();
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally { submit.disabled = false; }
+}
 function openResetScans() {
   $('#reset-scans-dialog').hidden = false;
   $('#reset-scans-cancel').focus();

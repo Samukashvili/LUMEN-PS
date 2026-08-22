@@ -23,6 +23,7 @@ export const api = {
   sessions: () => J('GET', '/api/sessions'),
   newSession: (name) => J('POST', '/api/sessions', { name }),
   session: (sid) => J('GET', `/api/sessions/${sid}`),
+  renameSession: (sid, name) => J('PATCH', `/api/sessions/${sid}`, { name }),
   getConfig: (sid) => J('GET', `/api/sessions/${sid}/config`),
   setConfig: (sid, overrides) => J('PUT', `/api/sessions/${sid}/config`, { overrides }),
   setOutputDir: (sid, path) => J('PUT', `/api/sessions/${sid}/output-dir`, { path }),

@@ -109,6 +109,20 @@ def create_session(name: str) -> dict:
     return save_meta(meta)
 
 
+def rename_session(sid: str, name: str) -> dict:
+    """Change a session's display name without moving its workspace."""
+    meta = load_meta(sid)
+    if not meta:
+        raise FileNotFoundError(f"Session not found: {sid}")
+    clean = str(name).strip()
+    if not clean:
+        raise ValueError("Session name cannot be empty")
+    if len(clean) > 80:
+        raise ValueError("Session name cannot exceed 80 characters")
+    meta["name"] = clean
+    return save_meta(meta)
+
+
 def list_sessions() -> list[dict]:
     if not SESSIONS_DIR.exists():
         return []
