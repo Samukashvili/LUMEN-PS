@@ -8,6 +8,18 @@ from __future__ import annotations
 
 from .. import capture_wia as cw
 
+_COMMON_DPI = (75, 100, 150, 200, 300, 600, 1200, 2400, 4800)
+
+
+def _range_dpi_options(p):
+    """Offer familiar resolutions that satisfy a WIA resolution range."""
+    minimum, maximum, step = int(p.SubTypeMin), int(p.SubTypeMax), int(p.SubTypeStep)
+    if minimum > maximum or step <= 0:
+        return []
+    candidates = {*_COMMON_DPI, minimum, maximum, int(p.Value)}
+    return sorted(v for v in candidates
+                  if minimum <= v <= maximum and (v - minimum) % step == 0)
+
 
 def _com_init():
     """Initialise COM for the current thread (WIA needs it). Safe to call often."""
@@ -36,6 +48,9 @@ def device_status(name_hint: str = "M113") -> dict:
             if p is None:
                 return []
             try:
+                # SubTypeValues is defined only for WIA lists and flags.
+                if str(pid) == cw.WIA_IPS_XRES and int(p.SubType) == 1:
+                    return _range_dpi_options(p)
                 return [int(x) for x in p.SubTypeValues]
             except Exception:
                 try:
