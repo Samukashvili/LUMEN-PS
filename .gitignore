@@ -14,3 +14,7 @@ __pycache__/
 /sessions/
 /.venv/
 /.lumen-ps/
+
+# Local logo exploration, source artwork, and delivery kits.
+# Production assets remain tracked under leafscan/web/static/brand/.
+/docs/branding/

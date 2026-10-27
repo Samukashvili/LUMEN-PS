@@ -34,12 +34,22 @@ button{font-family:inherit}
   display:flex; align-items:center; justify-content:space-between;
   padding:0 20px; background:linear-gradient(180deg,#100E0B,#0B0B0C);
   border-bottom:1px solid var(--line)}
-.brand{display:flex; align-items:baseline; gap:14px}
+.brand{display:flex; align-items:center; gap:18px; min-width:0}
+.brand-logo{display:block; width:158px; height:auto; flex:none}
 .topbar-actions{display:flex;align-items:center;gap:9px}
-.mark{font-family:var(--disp); font-weight:700; font-size:19px; letter-spacing:.06em;
-  color:var(--amber); text-shadow:var(--glow)}
 .model{font-family:var(--mono); font-size:10px; letter-spacing:.18em; color:var(--dim)}
 @media(max-width:760px){.model{display:none}}
+@media(max-width:480px){
+  .topbar{padding:0 12px}
+  .brand-logo{width:126px}
+  .topbar-actions{gap:6px}
+  .topbar-actions .pill{padding:5px 8px;font-size:10px}
+  .topbar-actions .shutdown-btn{padding:0 8px}
+}
+@media(max-width:400px){
+  .shutdown-btn span:last-child{display:none}
+  .topbar-actions .pill-text{max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}
 
 .pill{display:inline-flex; align-items:center; gap:8px; padding:5px 12px;
   border:1px solid var(--line); border-radius:100px; background:var(--panel);
@@ -84,8 +94,14 @@ button{font-family:inherit}
   box-shadow:var(--glow-strong); animation:sweep 2.4s ease-in-out 1}
 @keyframes sweep{0%{transform:translateY(0);opacity:1}
   100%{transform:translateY(60vh);opacity:0}}
-.boot-title{font-size:44px; font-weight:700; letter-spacing:.08em; color:var(--amber);
-  text-shadow:var(--glow-strong)}
+.boot-logo{display:block; width:88px; height:88px; margin:0 auto 8px}
+.boot-title{line-height:1}
+.boot-title img{display:block; width:min(320px,100%); height:auto; margin:auto}
+@media(max-height:700px){
+  .boot{overflow:auto;place-items:start center;padding:16px}
+  .boot-core{padding:24px 24px 22px}
+  .boot-logo{width:64px;height:64px}
+}
 .boot-sub{color:var(--dim); max-width:42ch; margin:12px auto 0; font-size:13.5px}
 .boot-device{display:inline-flex; align-items:center; gap:10px; margin:26px auto 0;
   padding:9px 16px; border:1px solid var(--line); border-radius:100px;
